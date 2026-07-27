@@ -114,6 +114,12 @@ def optimize_kmesh(structure, refinement="medium", system_type=None,
     if is_hex:
         result.notes.append("Hexagonal cell detected — using Gamma-centered mesh.")
 
+    if not gamma_centered and st in ("semiconductor", "insulator"):
+        result.notes.append(
+            "⚠ Shifted mesh may miss gap at Γ/X for semiconductors. "
+            "Use Gamma-centered mesh for accurate band gaps."
+        )
+
     _build_steps(result, st, n1, n2, n3)
     return result
 

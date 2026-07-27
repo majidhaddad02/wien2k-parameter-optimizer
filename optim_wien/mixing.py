@@ -42,15 +42,18 @@ def optimize_mixing(
     is_metal = "metal" in system_type
 
     if is_metal:
-        if magnetic:
+        if magnetic or "large" in system_type:
             result.scheme = "MSEC1"
             result.mixing_factor = MIXING_MSEC1_MAGNETIC
-            result.notes.append("Metallic + magnetic → MSEC1 mixing.")
+            if magnetic:
+                result.notes.append("Metallic + magnetic → MSEC1 mixing.")
+            else:
+                result.notes.append("Large metallic system → MSEC1 mixing.")
         else:
             result.scheme = "MSR1a"
             result.mixing_factor = MIXING_MSR1A_METAL
             result.notes.append("Metallic system → MSR1a mixing.")
-        result.temp = TEMP_METAL if not magnetic else TEMP_MAGNETIC
+        result.temp = TEMP_MAGNETIC if (magnetic or "large" in system_type) else TEMP_METAL
         result.tetra = True
         result.max_scf = MAX_SCF_CYCLES_METAL
     else:

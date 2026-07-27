@@ -30,6 +30,15 @@ def generate_all_inputs(
     os.makedirs(output_dir, exist_ok=True)
     files = {}
 
+    if rmt_result.core_leakage_warnings:
+        lcore_path = os.path.join(output_dir, f"{basename}.lcore")
+        with open(lcore_path, "w") as f:
+            f.write(f"# Core leakage detected — proper superposition of core "
+                    f"densities.\n")
+            f.write(f"# See :NEC01 in case.scf and "
+                    f"http://www.wien2k.at/reg_user/faq/rmt.html\n")
+        files["lcore"] = lcore_path
+
     in0 = _gen_in0(basename, gmax_result, vxc_type, spin_polarized, calc_type)
     fpath = os.path.join(output_dir, f"{basename}.in0")
     with open(fpath, "w") as f:
@@ -151,9 +160,9 @@ def _gen_in2(case, mixing_result, magnetic, spin_polarized):
         )
 
     if mixing_result.tetra:
-        lines.append(f"TETRA  {mixing_result.max_scf}    101")
+        lines.append("TETRA    101")
     else:
-        lines.append(f"GAUSS  {mixing_result.max_scf}    (GAUSS method)")
+        lines.append("GAUSS    0.0020    (GAUSS method)")
 
     lines.append(f" {mixing_result.temp:.4f}        TEMP")
     lines.append("")
