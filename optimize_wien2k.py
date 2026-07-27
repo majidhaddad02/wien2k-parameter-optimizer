@@ -94,6 +94,12 @@ Examples:
                         help="Skip input file generation")
     parser.add_argument("--quiet", action="store_true",
                         help="Minimal output")
+    parser.add_argument("--only", default=None, nargs="*",
+                        choices=["rmt", "rkmax", "gmax", "lmax", "kmesh",
+                                 "mixing", "core"],
+                        metavar="STEP",
+                        help="Run only specified step(s): rmt rkmax gmax "
+                             "lmax kmesh mixing core")
     return parser.parse_args()
 
 
@@ -110,8 +116,38 @@ def run_interactive():
     _run_optimization(config, interactive=True)
 
 
+_STEP_DEPS = {
+    "rmt":     frozenset(),
+    "rkmax":   frozenset({"rmt"}),
+    "gmax":    frozenset({"rmt"}),
+    "lmax":    frozenset({"rmt"}),
+    "kmesh":   frozenset(),
+    "mixing":  frozenset({"kmesh"}),
+    "core":    frozenset({"rmt"}),
+}
+
+_ALL_STEPS = ("rmt", "rkmax", "gmax", "lmax", "kmesh", "mixing", "core")
+
+
+def _resolve_steps(only_flag):
+    if only_flag is None or len(only_flag) == 0:
+        return set(_ALL_STEPS)
+    if isinstance(only_flag, str):
+        requested = {only_flag}
+    else:
+        requested = set(only_flag)
+    resolved = set(requested)
+    for s in requested:
+        deps = _STEP_DEPS.get(s, frozenset())
+        resolved |= deps
+    return resolved
+
+
 def _run_optimization(config, interactive=False):
     args = type("Args", (), config)()
+
+    active = _resolve_steps(getattr(args, "only", None))
+    is_partial = active != set(_ALL_STEPS)
 
     if not os.path.isfile(args.struct_file):
         error(f"'{args.struct_file}' not found.")
@@ -120,16 +156,31 @@ def _run_optimization(config, interactive=False):
     precision = PREC_MAP[args.precision]
     vxc = VXC_MAP.get(args.vxc, VXCTYPE_PBE)
     quiet = args.quiet
+    verbose = not quiet
 
     structure = parse_struct(args.struct_file)
     if not structure.atoms:
         error("No atoms found in struct file.")
 
+    rmt_result = rkmax_result = gmax_result = lmax_result = None
+    kmesh_result = mixing_result = core_valence_result = None
+
+    _get_rmt = lambda: rmt_result.rmt_values  # noqa: E731
+    _get_kmesh_stype = lambda: kmesh_result.system_type  # noqa: E731
+
     tracker = ProgressTracker()
 
-    if not quiet:
+    n_vis = len([s for s in ("rmt", "rkmax", "gmax", "lmax", "kmesh", "mixing", "core")
+                 if s in active]) + 2  # +2 for Report and Input Files
+
+    if verbose:
         clear()
-        banner()
+        if is_partial:
+            s_list = ", ".join(sorted(active))
+            header(f"SELECTED STEPS: {s_list}", "bright_magenta")
+        else:
+            banner()
+
         header("STRUCTURE ANALYSIS", "bright_green")
         box(
             f"  {style('Title:', fg='bright_black', bold=True)}  "
@@ -146,75 +197,55 @@ def _run_optimization(config, interactive=False):
             f"{style(f'{structure.num_atoms_primitive} ({len(structure.atoms)} non-equiv)', fg='white')}",
             fg="bright_green",
         )
-
         for a in structure.atoms:
             info(f"{a.element}", f"Z={a.z}  mult={a.mult}  initial RMT={a.rmt:.3f}")
 
-        tracker.start()
+        tracker.start(n_vis)
 
     t_start = time.time()
 
-    if not quiet:
-        tracker.step("RMT")
-    rmt_result = optimize_rmt(structure, calc_type, precision)
-    if not quiet:
-        tracker.done()
+    def _step(name, fn, *, show=None):
+        """Run one optimization step. If `show` is False, run silently (dependency)."""
+        visible = show if show is not None else (name in active)
+        if visible and verbose:
+            tracker.step(name)
+        result = fn()
+        if visible and verbose:
+            tracker.done()
+        return result
 
-    if not quiet:
-        tracker.step("RKMAX")
-    rkmax_result = optimize_rkmax(structure.atoms, rmt_result.rmt_values, precision)
-    if not quiet:
-        tracker.done()
-
-    if not quiet:
-        tracker.step("GMAX")
-    gmax_result = optimize_gmax(structure.atoms, rmt_result.rmt_values, precision)
-    if not quiet:
-        tracker.done()
-
-    if not quiet:
-        tracker.step("LMAX/LVNS")
-    lmax_result = optimize_lmax(structure.atoms, rmt_result.rmt_values)
-    if not quiet:
-        tracker.done()
-
-    if not quiet:
-        tracker.step("k-mesh")
-    kmesh_result = optimize_kmesh(structure, refinement=args.refinement,
-                                   system_type=args.system_type)
-    if not quiet:
-        tracker.done()
-
-    if not quiet:
-        tracker.step("Mixing/TEMP")
-    mixing_result = optimize_mixing(structure,
-                                     system_type=kmesh_result.system_type,
-                                     calc_type=calc_type, precision=precision,
-                                     magnetic=args.magnetic)
-    if not quiet:
-        tracker.done()
-
-    if not quiet:
-        tracker.step("Core/Valence")
-    core_valence_result = optimize_core_valence(structure.atoms,
-                                                 rmt_result.rmt_values, precision)
-    if not quiet:
-        tracker.done()
+    rmt_result = _step("rmt",
+        lambda: optimize_rmt(structure, calc_type, precision))
+    rkmax_result = _step("rkmax",
+        lambda: optimize_rkmax(structure.atoms, _get_rmt(), precision))
+    gmax_result = _step("gmax",
+        lambda: optimize_gmax(structure.atoms, _get_rmt(), precision))
+    lmax_result = _step("lmax",
+        lambda: optimize_lmax(structure.atoms, _get_rmt()))
+    kmesh_result = _step("kmesh",
+        lambda: optimize_kmesh(structure, refinement=args.refinement,
+                                system_type=args.system_type))
+    mixing_result = _step("mixing",
+        lambda: optimize_mixing(structure, system_type=_get_kmesh_stype(),
+                                calc_type=calc_type, precision=precision,
+                                magnetic=args.magnetic))
+    core_valence_result = _step("core",
+        lambda: optimize_core_valence(structure.atoms, _get_rmt(), precision))
 
     os.makedirs(args.output, exist_ok=True)
     basename = os.path.splitext(os.path.basename(args.struct_file))[0]
     if basename.endswith(".struct"):
         basename = basename[:-7]
 
-    if not quiet:
-        tracker.step("Report")
+    if verbose:
+        tracker.step("report")
     report = generate_report(
         structure, rmt_result, rkmax_result, gmax_result, lmax_result,
         kmesh_result, mixing_result, core_valence_result,
         calc_type=args.calc_type, precision=args.precision,
         struct_path=args.struct_file,
     )
-    if not quiet:
+    if verbose:
         tracker.done()
 
     rpt_path = os.path.join(args.output, f"{basename}_optimization_report.txt")
@@ -226,8 +257,8 @@ def _run_optimization(config, interactive=False):
 
     gen_files = {}
     if not args.no_input_files:
-        if not quiet:
-            tracker.step("Input Files")
+        if verbose:
+            tracker.step("input_files")
         gen_files = generate_all_inputs(
             args.output, basename, structure,
             rmt_result, rkmax_result, gmax_result, lmax_result,
@@ -235,10 +266,10 @@ def _run_optimization(config, interactive=False):
             calc_type=args.calc_type, vxc_type=vxc,
             magnetic=args.magnetic, spin_polarized=args.magnetic,
         )
-        if not quiet:
+        if verbose:
             tracker.done()
 
-    if not quiet:
+    if verbose:
         tracker.finish()
 
     conv_result = ConvergenceResult()
@@ -514,6 +545,7 @@ def main():
         "output": args.output,
         "no_input_files": args.no_input_files,
         "quiet": args.quiet,
+        "only": args.only,
     }
     ret = _run_optimization(config, interactive=False)
     sys.exit(ret.exit_code if ret else 0)

@@ -507,55 +507,50 @@ class InteractiveWizard:
 class ProgressTracker:
     """Show progress during optimization steps."""
 
-    STEPS = [
-        ("RMT", "Optimizing muffin-tin radii", "bright_green"),
-        ("RKMAX", "Optimizing plane-wave cutoff", "bright_cyan"),
-        ("GMAX", "Optimizing Fourier expansion", "bright_blue"),
-        ("LMAX/LVNS", "Optimizing angular momentum cutoffs", "bright_magenta"),
-        ("k-mesh", "Generating adaptive k-point mesh", "bright_yellow"),
-        ("Mixing/TEMP", "Configuring SCF mixing scheme", "bright_green"),
-        ("Core/Valence", "Setting core-valence separation", "bright_cyan"),
-        ("Report", "Generating scientific report", "bright_blue"),
-        ("Input Files", "Generating WIEN2k input files", "bright_magenta"),
-    ]
+    STEPS = {
+        "rmt": ("Optimizing muffin-tin radii", "bright_green"),
+        "rkmax": ("Optimizing plane-wave cutoff", "bright_cyan"),
+        "gmax": ("Optimizing Fourier expansion", "bright_blue"),
+        "lmax": ("Optimizing angular momentum cutoffs", "bright_magenta"),
+        "kmesh": ("Generating adaptive k-point mesh", "bright_yellow"),
+        "mixing": ("Configuring SCF mixing scheme", "bright_green"),
+        "core": ("Setting core-valence separation", "bright_cyan"),
+        "report": ("Generating scientific report", "bright_blue"),
+        "input_files": ("Generating WIEN2k input files", "bright_magenta"),
+    }
 
     def __init__(self):
         self.current = 0
+        self.active = 0
 
-    def start(self):
+    def start(self, active_steps=None):
         self.current = 0
+        self.active = active_steps or len(self.STEPS)
         echo()
         w = term_width()
         echo(style("  OPTIMIZATION PROGRESS  ".center(w, BOX["h2"]),
                    fg="cyan", bold=True))
         echo()
 
-    def step(self, step_name=None):
-        if step_name is None and self.current < len(self.STEPS):
-            step_name = self.STEPS[self.current][0]
-        desc = ""
-        fg = "white"
-        for name, d, f in self.STEPS:
-            if name == step_name:
-                desc = d
-                fg = f
-                break
-
+    def step(self, step_name):
+        if step_name not in self.STEPS:
+            return
         self.current += 1
-        total = len(self.STEPS)
-        idx = self.current
-
+        desc, fg = self.STEPS[step_name]
         marker = style(BOX["dot"], fg=fg)
         label = style(f"{desc}...", fg=fg)
-        count = style(f"[{idx}/{total}]", fg="bright_black")
+        count = style(f"[{self.current}/{self.active}]", fg="bright_black")
         sys.stdout.write(f"  {marker} {label} {count}")
         sys.stdout.flush()
+        self._last_desc = desc
+        self._last_fg = fg
 
     def done(self, text="OK"):
-        count_len = len(f"[{self.current}/{len(self.STEPS)}]")
+        desc = getattr(self, "_last_desc", "")
+        fg_obj = getattr(self, "_last_fg", "green")
         sys.stdout.write(f"\r{' ' * (term_width() - 2)}")
         sys.stdout.write(f"\r  {style(BOX['check'], fg='green')} "
-                         f"{style(self.STEPS[self.current - 1][1], fg='green')}"
+                         f"{style(desc, fg='green')}"
                          f"  {style(text, fg='green', bold=True)}")
         sys.stdout.write("\n")
         sys.stdout.flush()
