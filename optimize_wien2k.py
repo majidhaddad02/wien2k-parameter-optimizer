@@ -1,38 +1,10 @@
 #!/usr/bin/env python3
 """
-================================================================================
-WIEN2k Comprehensive Parameter Optimization & Convergence Tool
-================================================================================
+WIEN2k Comprehensive Parameter Optimization & Convergence Tool.
 
-Automatically optimizes ALL WIEN2k preprocessing parameters from a case.struct file:
-
-  RMT     — Muffin-Tin radii (4 strict conditions)
-  RKMAX   — Plane-wave cutoff (Blaha's reference table)
-  GMAX    — Fourier expansion for density/potential
-  LMAX/LVNS — Angular momentum cutoffs
-  k-mesh  — Brillouin zone sampling (adaptive)
-  Mixing  — SCF convergence scheme (PRATT/MSR1a/MSEC1)
-  TEMP    — Fermi smearing for metals
-  Core/Valence — Ecut and HDLO recommendations
-
-Generates:
-  - Comprehensive optimization report
-  - case.in0, case.in1, case.in2, case.inm, case.klist input files
-  - Optimized case.struct file
-
-Usage:
-    python optimize_wien2k.py case.struct [options]
-
-Options:
-    --calc-type TYPE     scf|relaxation|optimization|eos|forces|efg (default: scf)
-    --precision PREC     screening|coarse|medium|high|very_high (default: medium)
-    --refinement REF     coarse|medium|fine|very_fine (default: medium)
-    --system-type TYPE   metal_small|semiconductor|insulator|... (auto-detect)
-    --vxc TYPE           pbe|lda|wc|pbesol|scan (default: pbe)
-    --magnetic           Enable spin-polarized calculation
-    --output DIR         Output directory (default: ./optim_results)
-    --no-input-files     Skip generating WIEN2k input files
-    --quiet              Minimal console output
+Two modes:
+  1. Interactive wizard:  python optimize_wien2k.py -i
+  2. Command-line:         python optimize_wien2k.py case.struct [options]
 
 References:
     P. Blaha et al., J. Chem. Phys. 152, 074101 (2020)
@@ -42,6 +14,7 @@ References:
 import argparse
 import os
 import sys
+import time
 
 from optim_wien.constants import CalcType, Precision, VXCTYPE_PBE
 from optim_wien.struct_parser import parse_struct
@@ -55,7 +28,11 @@ from optim_wien.core_valence import optimize_core_valence
 from optim_wien.input_generator import generate_all_inputs
 from optim_wien.report import generate_report, write_optimized_struct
 from optim_wien.convergence import auto_converge, wien2k_available, ConvergenceResult
-
+from optim_wien.cli import (
+    InteractiveWizard, ProgressTracker,
+    box, header, section, info, warn, error, success, style, clear, echo,
+    confirm, menu, banner, term_width, BOX,
+)
 
 VXC_MAP = {
     "pbe": 13, "lda": 5, "wc": 11, "pbesol": 19, "scan": 28, "hse": 40,
@@ -80,13 +57,20 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python optimize_wien2k.py BaTiO3.struct
-  python optimize_wien2k.py BaTiO3.struct --calc-type relaxation --precision high
+  python optimize_wien2k.py -i                          # interactive wizard
+  python optimize_wien2k.py BaTiO3.struct                # quick run
+  python optimize_wien2k.py BaTiO3.struct --precision high --refinement fine
   python optimize_wien2k.py Fe.struct --magnetic --precision very_high
-  python optimize_wien2k.py slab.struct --system-type surface
+  python optimize_wien2k.py case.struct --auto-converge  # converge with WIEN2k
         """,
     )
-    parser.add_argument("struct_file", help="Path to case.struct file")
+    parser.add_argument(
+        "struct_file", nargs="?", help="Path to case.struct file"
+    )
+    parser.add_argument(
+        "-i", "--interactive", action="store_true",
+        help="Launch interactive wizard mode"
+    )
     parser.add_argument("--calc-type", default="scf",
                         choices=list(CALC_MAP.keys()), help="Calculation type")
     parser.add_argument("--precision", default="medium",
@@ -113,80 +97,125 @@ Examples:
     return parser.parse_args()
 
 
-def main():
-    args = parse_args()
+def run_interactive():
+    wizard = InteractiveWizard()
+    config = wizard.run()
+    if config is None:
+        echo()
+        echo(style("  Cancelled.", fg="bright_black"))
+        return
+
+    clear()
+    banner()
+    _run_optimization(config, interactive=True)
+
+
+def _run_optimization(config, interactive=False):
+    args = type("Args", (), config)()
 
     if not os.path.isfile(args.struct_file):
-        print(f"ERROR: {args.struct_file} not found.", file=sys.stderr)
-        sys.exit(1)
+        error(f"'{args.struct_file}' not found.")
 
     calc_type = CALC_MAP[args.calc_type]
     precision = PREC_MAP[args.precision]
     vxc = VXC_MAP.get(args.vxc, VXCTYPE_PBE)
+    quiet = args.quiet
 
     structure = parse_struct(args.struct_file)
     if not structure.atoms:
-        print("ERROR: No atoms found.", file=sys.stderr)
-        sys.exit(1)
+        error("No atoms found in struct file.")
 
-    if not args.quiet:
-        print(f"Structure: {structure.title}")
-        print(f"  Lattice: {structure.lattice_type}")
-        print(f"  a={structure.a:.4f} b={structure.b:.4f} c={structure.c:.4f}")
-        print(f"  α={structure.alpha:.1f} β={structure.beta:.1f} γ={structure.gamma:.1f}")
-        print(f"  Volume: {structure.volume:.2f} bohr³")
-        print(f"  Atoms: {structure.num_atoms_primitive} "
-              f"({len(structure.atoms)} non-equiv)")
+    tracker = ProgressTracker()
+
+    if not quiet:
+        clear()
+        banner()
+        header("STRUCTURE ANALYSIS", "bright_green")
+        box(
+            f"  {style('Title:', fg='bright_black', bold=True)}  "
+            f"{style(structure.title, fg='white')}\n"
+            f"  {style('Lattice:', fg='bright_black', bold=True)}  "
+            f"{style(structure.lattice_type, fg='bright_magenta')}\n"
+            f"  {style('a, b, c:', fg='bright_black', bold=True)}  "
+            f"{style(f'{structure.a:.4f}  {structure.b:.4f}  {structure.c:.4f}  bohr', fg='white')}\n"
+            f"  {style('α, β, γ:', fg='bright_black', bold=True)}  "
+            f"{style(f'{structure.alpha:.1f}°  {structure.beta:.1f}°  {structure.gamma:.1f}°', fg='white')}\n"
+            f"  {style('Volume:', fg='bright_black', bold=True)}  "
+            f"{style(f'{structure.volume:.2f} bohr³', fg='bright_magenta')}\n"
+            f"  {style('Atoms:', fg='bright_black', bold=True)}  "
+            f"{style(f'{structure.num_atoms_primitive} ({len(structure.atoms)} non-equiv)', fg='white')}",
+            fg="bright_green",
+        )
+
         for a in structure.atoms:
-            print(f"    {a.element}: Z={a.z}, mult={a.mult}, RMT={a.rmt:.3f}")
-        print()
+            info(f"{a.element}", f"Z={a.z}  mult={a.mult}  initial RMT={a.rmt:.3f}")
 
-    if not args.quiet:
-        print("Optimizing RMT...")
+        tracker.start()
+
+    t_start = time.time()
+
+    if not quiet:
+        tracker.step("RMT")
     rmt_result = optimize_rmt(structure, calc_type, precision)
+    if not quiet:
+        tracker.done()
 
-    if not args.quiet:
-        print("Optimizing RKMAX...")
+    if not quiet:
+        tracker.step("RKMAX")
     rkmax_result = optimize_rkmax(structure.atoms, rmt_result.rmt_values, precision)
+    if not quiet:
+        tracker.done()
 
-    if not args.quiet:
-        print("Optimizing GMAX...")
+    if not quiet:
+        tracker.step("GMAX")
     gmax_result = optimize_gmax(structure.atoms, rmt_result.rmt_values, precision)
+    if not quiet:
+        tracker.done()
 
-    if not args.quiet:
-        print("Optimizing LMAX/LVNS...")
+    if not quiet:
+        tracker.step("LMAX/LVNS")
     lmax_result = optimize_lmax(structure.atoms, rmt_result.rmt_values)
+    if not quiet:
+        tracker.done()
 
-    if not args.quiet:
-        print("Optimizing k-mesh...")
+    if not quiet:
+        tracker.step("k-mesh")
     kmesh_result = optimize_kmesh(structure, refinement=args.refinement,
                                    system_type=args.system_type)
+    if not quiet:
+        tracker.done()
 
-    if not args.quiet:
-        print("Optimizing mixing/TEMP...")
+    if not quiet:
+        tracker.step("Mixing/TEMP")
     mixing_result = optimize_mixing(structure,
                                      system_type=kmesh_result.system_type,
                                      calc_type=calc_type, precision=precision,
                                      magnetic=args.magnetic)
+    if not quiet:
+        tracker.done()
 
-    if not args.quiet:
-        print("Optimizing core/valence...")
+    if not quiet:
+        tracker.step("Core/Valence")
     core_valence_result = optimize_core_valence(structure.atoms,
                                                  rmt_result.rmt_values, precision)
+    if not quiet:
+        tracker.done()
 
     os.makedirs(args.output, exist_ok=True)
     basename = os.path.splitext(os.path.basename(args.struct_file))[0]
     if basename.endswith(".struct"):
         basename = basename[:-7]
 
-    if not args.quiet:
-        print("Generating report...")
+    if not quiet:
+        tracker.step("Report")
     report = generate_report(
         structure, rmt_result, rkmax_result, gmax_result, lmax_result,
         kmesh_result, mixing_result, core_valence_result,
         calc_type=args.calc_type, precision=args.precision,
         struct_path=args.struct_file,
     )
+    if not quiet:
+        tracker.done()
 
     rpt_path = os.path.join(args.output, f"{basename}_optimization_report.txt")
     with open(rpt_path, "w") as f:
@@ -197,8 +226,8 @@ def main():
 
     gen_files = {}
     if not args.no_input_files:
-        if not args.quiet:
-            print("Generating WIEN2k input files...")
+        if not quiet:
+            tracker.step("Input Files")
         gen_files = generate_all_inputs(
             args.output, basename, structure,
             rmt_result, rkmax_result, gmax_result, lmax_result,
@@ -206,27 +235,27 @@ def main():
             calc_type=args.calc_type, vxc_type=vxc,
             magnetic=args.magnetic, spin_polarized=args.magnetic,
         )
+        if not quiet:
+            tracker.done()
+
+    if not quiet:
+        tracker.finish()
 
     conv_result = ConvergenceResult()
     if args.auto_converge:
         if not wien2k_available():
-            if not args.quiet:
-                print()
-                print("⚠  WIEN2k not found in PATH. Cannot auto-converge.")
-                print("   Install WIEN2k and source w2web environment first.")
-                print("   Falling back to recommended parameters only.")
+            if not quiet:
+                warn("WIEN2k not found in PATH. Cannot auto-converge.")
+                echo(style("       Using recommended parameters only.", fg="bright_black"))
             conv_result = ConvergenceResult(
                 warnings=["WIEN2k not available — using recommended parameters."]
             )
         else:
-            if not args.quiet:
-                print()
-                print("=" * 60)
-                print("AUTO-CONVERGENCE (Blaha hierarchy)")
-                print("=" * 60)
-                print("k-mesh convergence → RKMAX convergence")
-                print(f"Threshold: ΔE < 0.1 mRy")
-                print()
+            if not quiet:
+                header("AUTO-CONVERGENCE", "bright_magenta")
+                info("Method", "Blaha hierarchy: k-mesh → RKMAX")
+                info("Threshold", "ΔE < 0.1 mRy")
+                echo()
 
             conv_case_dir = os.path.abspath(args.output)
             conv_result = auto_converge(
@@ -246,78 +275,248 @@ def main():
                 rkmax_threshold=0.0001,
             )
 
-            if not args.quiet:
-                print()
-                print("=" * 60)
-                print("CONVERGENCE RESULTS")
-                print("=" * 60)
-                print(f"  Converged: {conv_result.converged}")
+            if not quiet:
+                header("CONVERGENCE RESULTS", "bright_cyan")
+                info("Converged", style("YES" if conv_result.converged else "NO",
+                       fg="green" if conv_result.converged else "yellow"))
                 if conv_result.final_rmts:
-                    print(f"  Final RMTs: {', '.join(f'{structure.atoms[i].element}={conv_result.final_rmts[i]:.4f}' for i in range(len(conv_result.final_rmts)))}")
+                    rmt_str = ", ".join(
+                        f"{structure.atoms[i].element}={conv_result.final_rmts[i]:.4f}"
+                        for i in range(len(conv_result.final_rmts))
+                    )
+                    info("Final RMTs", rmt_str)
                 if conv_result.final_kmesh[0] > 0:
-                    print(f"  Final k-mesh: {conv_result.final_kmesh[0]}×"
-                          f"{conv_result.final_kmesh[1]}×"
-                          f"{conv_result.final_kmesh[2]}")
-                print(f"  Final RKMAX: {conv_result.final_rkmax}")
-                print(f"  Runtime: {conv_result.total_runtime:.1f}s")
-                if conv_result.rmt_history:
-                    print("  RMT history:")
-                    for entry in conv_result.rmt_history:
-                        it = entry["iteration"]
-                        rmts = entry["rmts"]
-                        leak = entry.get("max_leak", "?")
-                        rmt_str = ", ".join(
-                            f"{structure.atoms[i].element}={rmts[i]:.4f}"
-                            for i in range(len(rmts))
-                        )
-                        print(f"    iter {it}: RMT=({rmt_str}), max_leak={leak}")
-                        if "action" in entry:
-                            print(f"      → {entry['action']}")
-                if conv_result.kmesh_history:
-                    print("  k-mesh history:")
-                    for entry in conv_result.kmesh_history:
-                        m = entry["mesh"]
-                        e = entry["energy"]
-                        es = f"{e:.8f}" if e else "N/A"
-                        print(f"    {m[0]}×{m[1]}×{m[2]} → E = {es}")
-                if conv_result.rkmax_history:
-                    print("  RKMAX history:")
-                    for entry in conv_result.rkmax_history:
-                        r = entry["rkmax"]
-                        e = entry["energy"]
-                        es = f"{e:.8f}" if e else "N/A"
-                        print(f"    RKMAX={r} → E = {es}")
+                    info("Final k-mesh",
+                         f"{conv_result.final_kmesh[0]}×{conv_result.final_kmesh[1]}×{conv_result.final_kmesh[2]}")
+                info("Final RKMAX", f"{conv_result.final_rkmax}")
+                info("Runtime", f"{conv_result.total_runtime:.1f}s")
                 for w in conv_result.warnings:
-                    print(f"  ⚠ {w}")
-                print()
+                    warn(w)
+                echo()
 
-    if not args.quiet:
-        print()
-        print(report)
-        print()
-        print(f"Output directory: {args.output}/")
-        print(f"  {basename}_optimization_report.txt")
-        print(f"  {basename}.struct_optimized")
-        if not args.no_input_files:
-            for name, fpath in gen_files.items():
-                print(f"  {basename}.{name} → {name}")
-        print()
+    runtime = time.time() - t_start
+
+    if not quiet:
+        _show_results(rmt_result, rkmax_result, gmax_result, lmax_result,
+                      kmesh_result, mixing_result, core_valence_result,
+                      structure, conv_result, basename, args, gen_files, runtime)
 
     has_critical = any("CRITICAL" in w for w in rmt_result.core_leakage_warnings)
     has_final = any("FINAL WARNING" in w for w in rmt_result.overlap_warnings)
 
-    if has_critical or has_final:
-        print("⚠  Critical warnings — manual review required.")
-        sys.exit(2)
+    if interactive and not quiet:
+        echo()
+        _post_run_menu(args, config, rmt_result, rkmax_result,
+                       kmesh_result, core_valence_result, basename, has_critical)
 
-    if not args.quiet:
-        n1, n2, n3 = kmesh_result.mesh
-        print(f"Ready for WIEN2k initialization:")
-        print(f"  init_lapw -b -rkmax {rkmax_result.rkmax} "
-              f"-numk {n1*100+n2*10+n3} "
-              f"-ecut {int(abs(core_valence_result.ecut))}")
-        print(f"  run_lapw -p")
-        print()
+    return _build_return(has_critical, has_final, args.quiet,
+                         kmesh_result, rkmax_result, core_valence_result)
+
+
+def _show_results(rmt_result, rkmax_result, gmax_result, lmax_result,
+                  kmesh_result, mixing_result, core_valence_result,
+                  structure, conv_result, basename, args, gen_files, runtime):
+    header("OPTIMIZATION RESULTS", "bright_green")
+
+    # Quick summary card
+    rmt_str = ", ".join(
+        f"{structure.atoms[i].element}={rmt_result.rmt_values[i]:.3f}"
+        for i in range(len(structure.atoms))
+    )
+
+    n1, n2, n3 = kmesh_result.mesh
+
+    card_lines = (
+        f"  {style('RMT:', fg='bright_yellow', bold=True)}      {style(rmt_str, fg='white')}\n"
+        f"  {style('RKMAX:', fg='bright_yellow', bold=True)}    "
+        f"{style(f'{rkmax_result.rkmax}', fg='bright_magenta')}    "
+        f"{style('GMAX:', fg='bright_yellow', bold=True)}     "
+        f"{style(f'{gmax_result.gmax}', fg='bright_cyan')}\n"
+        f"  {style('Ecut:', fg='bright_yellow', bold=True)}     "
+        f"{style(f'{core_valence_result.ecut:.1f} Ry', fg='bright_cyan')}   "
+        f"{style('Mixing:', fg='bright_yellow', bold=True)}  "
+        f"{style(f'{mixing_result.scheme} {mixing_result.mixing_factor:.2f}', fg='bright_cyan')}\n"
+        f"  {style('k-mesh:', fg='bright_yellow', bold=True)}   "
+        f"{style(f'{n1}×{n2}×{n3} ({kmesh_result.total_points} pts)', fg='bright_magenta')}   "
+        f"{style('TEMP:', fg='bright_yellow', bold=True)}     "
+        f"{style(f'{mixing_result.temp:.4f} Ry', fg='bright_cyan')}\n"
+        f"  {style('System:', fg='bright_yellow', bold=True)}   "
+        f"{style(kmesh_result.system_type, fg='white')}          "
+        f"{style('Runtime:', fg='bright_yellow', bold=True)}  "
+        f"{style(f'{runtime:.1f}s', fg='white')}"
+    )
+    box(card_lines, title="Summary", fg="bright_green")
+
+    # Output files
+    echo()
+    section("Output Files")
+    info("Directory", args.output)
+    info("Report", f"{basename}_optimization_report.txt")
+    info("Struct", f"{basename}.struct_optimized")
+    if not args.no_input_files:
+        for name in gen_files:
+            info(name, basename)
+
+    # WIEN2k command
+    echo()
+    section("Ready for WIEN2k")
+    init_cmd = (f"init_lapw -b -rkmax {rkmax_result.rkmax} "
+                f"-numk {n1*100+n2*10+n3} "
+                f"-ecut {int(abs(core_valence_result.ecut))}")
+    echo(style(f"    $ {init_cmd}", fg="bright_black"))
+    echo(style(f"    $ run_lapw -p", fg="bright_black"))
+    echo()
+
+
+def _post_run_menu(args, config, rmt_result, rkmax_result,
+                   kmesh_result, core_valence_result, basename, has_critical):
+    """Interactive menu after optimization completes."""
+    while True:
+        idx = menu(
+            "What would you like to do next?",
+            [
+                {"label": "View Full Report", "desc": "Display the complete scientific report"},
+                {"label": "View Generated Files", "desc": "List all output files"},
+                {"label": "Re-run with Different Settings", "desc": "Go back to parameter selection"},
+                {"label": "Edit RMT Manually", "desc": "Adjust one or more RMT values"},
+                {"label": "Edit RKMAX", "desc": "Change the RKMAX value"},
+                {"label": "Exit", "desc": "Done — continue to WIEN2k"},
+            ],
+            prompt="Action",
+            default=5,
+        )
+
+        if idx < 0 or idx == 5:
+            break
+
+        if idx == 0:
+            rpt_path = os.path.join(args.output,
+                                    f"{basename}_optimization_report.txt")
+            if os.path.isfile(rpt_path):
+                with open(rpt_path) as f:
+                    content = f.read()
+                clear()
+                header("FULL SCIENTIFIC REPORT", "bright_cyan")
+                echo(content)
+            else:
+                warn("Report file not found.")
+            input(style("\n  Press Enter to continue...", fg="bright_black"))
+
+        elif idx == 1:
+            clear()
+            header("GENERATED FILES", "bright_cyan")
+            out = args.output
+            if os.path.isdir(out):
+                for f in sorted(os.listdir(out)):
+                    full = os.path.join(out, f)
+                    size = os.path.getsize(full)
+                    if f.endswith(".struct_optimized"):
+                        kind = style("STRUCT", fg="green")
+                    elif f.endswith("_report.txt"):
+                        kind = style("REPORT", fg="yellow")
+                    elif f.endswith(".in0"):
+                        kind = style("IN0   ", fg="cyan")
+                    elif f.endswith(".in1"):
+                        kind = style("IN1   ", fg="cyan")
+                    elif f.endswith(".in2"):
+                        kind = style("IN2   ", fg="cyan")
+                    elif f.endswith(".inm"):
+                        kind = style("INM   ", fg="cyan")
+                    elif f.endswith(".klist"):
+                        kind = style("KLIST ", fg="cyan")
+                    else:
+                        kind = style("OTHER ", fg="bright_black")
+                    echo(f"  {kind}  {f}  ({size} B)")
+            input(style("\n  Press Enter to continue...", fg="bright_black"))
+
+        elif idx == 2:
+            wizard = InteractiveWizard(struct_file=args.struct_file)
+            new_config = wizard.run()
+            if new_config:
+                config.update(new_config)
+                clear()
+                banner()
+                _run_optimization(config, interactive=True)
+                return
+
+        elif idx == 3:
+            clear()
+            header("MANUAL RMT EDIT", "bright_yellow")
+            echo(style("  Current RMT values:", fg="bright_black"))
+            for i, a in enumerate(rmt_result.rmt_values):
+                echo(f"    [{i + 1}] {structure.atoms[i].element}: {a:.5f} bohr")
+            echo()
+            echo(style("  Enter new value or leave blank to keep:", fg="bright_black"))
+            for i in range(len(rmt_result.rmt_values)):
+                a = rmt_result.rmt_values[i]
+                raw = input(
+                    f"    {structure.atoms[i].element} [{a:.5f}]: "
+                ).strip()
+                if raw:
+                    try:
+                        rmt_result.rmt_values[i] = float(raw)
+                    except ValueError:
+                        warn(f"Invalid number for {structure.atoms[i].element}")
+            echo()
+            success("RMT values updated. Re-run to regenerate files with new values.")
+
+        elif idx == 4:
+            clear()
+            header("MANUAL RKMAX EDIT", "bright_yellow")
+            info("Current RKMAX", f"{rkmax_result.rkmax}")
+            raw = input(style("\n  New RKMAX: ", fg="bright_black")).strip()
+            if raw:
+                try:
+                    rkmax_result.rkmax = float(raw)
+                    success(f"RKMAX set to {rkmax_result.rkmax}")
+                except ValueError:
+                    warn("Invalid number.")
+
+        clear()
+
+
+def _build_return(has_critical, has_final, quiet, kmesh_result,
+                  rkmax_result, core_valence_result):
+    class Ret:
+        pass
+    r = Ret()
+    r.exit_code = 0
+    if has_critical or has_final:
+        if not quiet:
+            warn("Critical warnings — please review RMT values manually.")
+        r.exit_code = 2
+    return r
+
+
+def main():
+    args = parse_args()
+
+    if args.interactive or (not args.struct_file and sys.stdin.isatty()):
+        run_interactive()
+        return
+    elif args.interactive:
+        run_interactive()
+        return
+
+    if not args.struct_file:
+        error("No struct file provided. Use -i for interactive mode "
+              "or: python optimize_wien2k.py case.struct")
+
+    config = {
+        "struct_file": args.struct_file,
+        "calc_type": args.calc_type,
+        "precision": args.precision,
+        "refinement": args.refinement,
+        "system_type": args.system_type,
+        "vxc": args.vxc,
+        "magnetic": args.magnetic,
+        "auto_converge": args.auto_converge,
+        "output": args.output,
+        "no_input_files": args.no_input_files,
+        "quiet": args.quiet,
+    }
+    ret = _run_optimization(config, interactive=False)
+    sys.exit(ret.exit_code if ret else 0)
 
 
 if __name__ == "__main__":
