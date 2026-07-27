@@ -52,6 +52,12 @@ def generate_all_inputs(
         f.write(in1)
     files["in1"] = fpath
 
+    in1c = _gen_in1c(core_valence_result)
+    fpath = os.path.join(output_dir, f"{basename}.in1c")
+    with open(fpath, "w") as f:
+        f.write(in1c)
+    files["in1c"] = fpath
+
     in2 = _gen_in2(basename, mixing_result, magnetic, spin_polarized)
     fpath = os.path.join(output_dir, f"{basename}.in2")
     with open(fpath, "w") as f:
@@ -134,6 +140,15 @@ def _v_nmt(num_atoms, use_hdlo):
     return 6
 
 
+def _gen_in1c(core_valence_result):
+    ecut_abs = abs(core_valence_result.ecut)
+    return "\n".join([
+        "WFFIL        (WFPRI, SUPWF)",
+        f" -{ecut_abs:.1f}  2    E-param for core states",
+        "",
+    ])
+
+
 def _gen_in2(case, mixing_result, magnetic, spin_polarized):
     lines = [f"TOT             ({case})"]
 
@@ -200,6 +215,18 @@ def _gen_klist(case, kmesh_result):
         f"   -6  {inv_flag}     add INV" if inv_flag else f"   -6  0     no INV",
         f" {s1:5.2f} {s2:5.2f} {s3:5.2f}     shift",
         "END",
-        "",
     ]
+    # Generate actual Monkhorst-Pack coordinates
+    # k_i = (2*j - n_i - 1) / (2*n_i) + s_i / n_i  for j = 0..n_i-1
+    weight = 1.0 / (n1 * n2 * n3)
+    for j in range(n1):
+        kx = (2.0 * j - n1 + 1) / (2.0 * n1) + s1 / n1
+        for k in range(n2):
+            ky = (2.0 * k - n2 + 1) / (2.0 * n2) + s2 / n2
+            for l in range(n3):
+                kz = (2.0 * l - n3 + 1) / (2.0 * n3) + s3 / n3
+                lines.append(
+                    f"{kx:12.8f} {ky:12.8f} {kz:12.8f} {weight:12.8f}"
+                )
+    lines.append("")
     return "\n".join(lines)

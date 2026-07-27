@@ -59,10 +59,22 @@ class KMeshResult:
 
 
 def optimize_kmesh(structure, refinement="medium", system_type=None,
-                   gamma_centered=None):
+                   gamma_centered=None, bandgap=None):
     result = KMeshResult()
 
     st = system_type or _detect_system(structure)
+
+    if bandgap is not None:
+        if bandgap <= 0.0:
+            st = "metal_small"
+            result.notes.append(f"bandgap={bandgap:.1f} eV → treating as metal.")
+        elif bandgap < 1.0:
+            st = "semiconductor"
+            result.notes.append(f"bandgap={bandgap:.1f} eV → treating as semiconductor.")
+        else:
+            st = "insulator"
+            result.notes.append(f"bandgap={bandgap:.1f} eV → treating as insulator.")
+
     result.system_type = st
 
     if st in ("surface",):

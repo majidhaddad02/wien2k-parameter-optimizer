@@ -82,6 +82,10 @@ Examples:
                         choices=["metal_small", "semiconductor", "insulator",
                                  "metal_large", "insulator_large", "surface",
                                  "molecule"])
+    parser.add_argument("--bandgap", type=float, default=None,
+                        metavar="eV",
+                        help="Known band gap (eV) — affects k-mesh density "
+                             "(semiconductor=1.0, insulator=0.5, metal=0.0)")
     parser.add_argument("--vxc", default="pbe",
                         choices=list(VXC_MAP.keys()), help="XC functional")
     parser.add_argument("--magnetic", action="store_true",
@@ -224,7 +228,8 @@ def _run_optimization(config, interactive=False):
         lambda: optimize_lmax(structure.atoms, _get_rmt()))
     kmesh_result = _step("kmesh",
         lambda: optimize_kmesh(structure, refinement=args.refinement,
-                                system_type=args.system_type))
+                                system_type=args.system_type,
+                                bandgap=getattr(args, "bandgap", None)))
     mixing_result = _step("mixing",
         lambda: optimize_mixing(structure, system_type=_get_kmesh_stype(),
                                 calc_type=calc_type, precision=precision,
@@ -573,6 +578,7 @@ def main():
         "precision": args.precision,
         "refinement": args.refinement,
         "system_type": args.system_type,
+        "bandgap": args.bandgap,
         "vxc": args.vxc,
         "magnetic": args.magnetic,
         "auto_converge": args.auto_converge,
