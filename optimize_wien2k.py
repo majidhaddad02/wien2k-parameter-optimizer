@@ -519,6 +519,33 @@ def _build_return(has_critical, has_final, quiet, kmesh_result,
     return r
 
 
+def _find_struct_file():
+    """Auto-detect case.struct files in the current directory."""
+    import glob
+    candidates = sorted(glob.glob("*.struct"))
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    echo()
+    header("MULTIPLE STRUCT FILES FOUND", "bright_yellow")
+    echo()
+    for i, f in enumerate(candidates):
+        echo(f"  {style(f'[{i + 1}]', fg='bright_magenta')} "
+             f"{style(f, fg='white')}")
+    echo()
+    while True:
+        try:
+            raw = input(f"  Pick one [1-{len(candidates)}]: ").strip()
+            idx = int(raw) - 1
+            if 0 <= idx < len(candidates):
+                return candidates[idx]
+        except (ValueError, EOFError, KeyboardInterrupt):
+            pass
+        echo(style(f"  Enter 1-{len(candidates)}", fg="red"))
+
+
 def main():
     args = parse_args()
 
@@ -530,8 +557,15 @@ def main():
         return
 
     if not args.struct_file:
-        error("No struct file provided. Use -i for interactive mode "
-              "or: python optimize_wien2k.py case.struct")
+        detected = _find_struct_file()
+        if detected:
+            echo()
+            echo(style(f"  {BOX['bullet']}  Using: {detected}", fg="bright_green"))
+            args.struct_file = detected
+        else:
+            error("No struct file found in current directory.\n"
+                  "  Provide one: opt_wien2k case.struct\n"
+                  "  Or run interactive: opt_wien2k -i")
 
     config = {
         "struct_file": args.struct_file,
