@@ -15,23 +15,31 @@ def _detect_system(structure):
     n = structure.num_atoms_primitive
     elements = [a.element for a in atoms]
     has_tm = any(ELEMENT_TYPE.get(el, "sp") in ("d", "f") for el in elements)
-    has_elneg = any(el in ("O", "N", "F", "S", "Cl", "Se", "Br", "Te", "I")
+    has_oxide = any(el in ("O", "F", "S", "Cl", "Se", "Br", "Te", "I")
                     for el in elements)
+    has_nitride = any(el in ("N", "C", "P", "As", "B") for el in elements)
     is_hex = abs(structure.gamma - 120.0) < 1e-6
 
     if n >= 40:
         return "metal_large" if has_tm else "insulator_large"
-    if has_tm and has_elneg and n <= 20:
+
+    if has_tm and has_nitride and not has_oxide and n <= 4:
+        return "metal_small"
+
+    if has_tm and has_oxide and n <= 20:
         return "semiconductor"
+
     if has_tm and n <= 10:
         return "metal_small"
+
     if n <= 10:
         return "semiconductor"
+
     return "semiconductor"
 
 
 _K_DENSITY = {
-    "metal_small": 5000, "semiconductor": 500, "insulator": 200,
+    "metal_small": 3000, "semiconductor": 500, "insulator": 200,
     "metal_large": 300, "insulator_large": 10,
 }
 

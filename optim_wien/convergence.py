@@ -165,6 +165,23 @@ def _write_all_inputs(basename, structure, rmt, rk, km, mix, cv, gm, lm,
     write_optimized_struct(structure, rmt.rmt_values, f"{basename}.struct")
 
 
+def _run_cmd(cmd, timeout=3600, desc="SCF"):
+    """Run a shell command with proper timeout handling."""
+    try:
+        subprocess.run(cmd, shell=True, check=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"{desc} timed out after {timeout // 60} minutes. "
+            f"Consider increasing parallelization, coarser parameters, "
+            f"or increasing timeout."
+        )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"{desc} failed with exit code {e.returncode}. "
+            f"Check {desc.lower()} output for details."
+        )
+
+
 def _run_init(basename, rkmax, kmesh, ecut, parallel):
     n1, n2, n3 = kmesh
     numk = n1 * 100 + n2 * 10 + n3
@@ -174,15 +191,13 @@ def _run_init(basename, rkmax, kmesh, ecut, parallel):
         f"init_lapw -b -rkmax {rkmax} -numk {numk} "
         f"-ecut {ecut_abs} {pflag}"
     )
-    subprocess.run(cmd, shell=True, check=True, timeout=300)
+    _run_cmd(cmd, timeout=300, desc="init_lapw")
 
 
 def _run_scf(basename, parallel):
     pflag = "-p" if parallel else ""
-    subprocess.run(
-        f"run_lapw {pflag} -ec 0.0001 -cc 0.001",
-        shell=True, check=True, timeout=3600,
-    )
+    cmd = f"run_lapw {pflag} -ec 0.0001 -cc 0.001"
+    _run_cmd(cmd, timeout=3600, desc="SCF")
 
 
 def _read_energy(case_file):
@@ -316,9 +331,9 @@ def _converge_rmt_core_leakage(
 
         try:
             _run_scf(basename, parallel)
-        except subprocess.CalledProcessError:
+        except RuntimeError as e:
             result.warnings.append(
-                f"RMT convergence: SCF failed at iteration {iteration}"
+                f"RMT convergence: SCF failed at iteration {iteration}: {e}"
             )
             break
 
@@ -415,9 +430,9 @@ def _converge_kmesh(basename, initial_kmesh, initial_rkmax, mix, cv, gm,
 
         try:
             _run_scf(basename, parallel)
-        except subprocess.CalledProcessError:
+        except RuntimeError as e:
             result.warnings.append(
-                f"SCF failed for k-mesh {mesh[0]}×{mesh[1]}×{mesh[2]}"
+                f"SCF failed for k-mesh {mesh[0]}×{mesh[1]}×{mesh[2]}: {e}"
             )
             break
 
@@ -470,8 +485,8 @@ def _converge_rkmax(basename, initial_rkmax, kmesh, mix, cv, gm, lm,
 
         try:
             _run_scf(basename, parallel)
-        except subprocess.CalledProcessError:
-            result.warnings.append(f"SCF failed for RKMAX = {rk}")
+        except RuntimeError as e:
+            result.warnings.append(f"SCF failed for RKMAX = {rk}: {e}")
             break
 
         energy = _read_energy(f"{basename}.scf")
