@@ -16,6 +16,7 @@ References:
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -168,7 +169,8 @@ def _write_all_inputs(basename, structure, rmt, rk, km, mix, cv, gm, lm,
 def _run_cmd(cmd, timeout=3600, desc="SCF"):
     """Run a shell command with proper timeout handling."""
     try:
-        subprocess.run(cmd, shell=True, check=True, timeout=timeout)
+        args = shlex.split(cmd) if isinstance(cmd, str) else cmd
+        subprocess.run(args, shell=False, check=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise RuntimeError(
             f"{desc} timed out after {timeout // 60} minutes. "
@@ -184,20 +186,20 @@ def _run_cmd(cmd, timeout=3600, desc="SCF"):
 
 def _run_init(basename, rkmax, kmesh, ecut, parallel):
     n1, n2, n3 = kmesh
-    numk = n1 * 100 + n2 * 10 + n3
+    numk = n1 * n2 * n3
     ecut_abs = int(abs(ecut))
-    pflag = "-p" if parallel else ""
-    cmd = (
-        f"init_lapw -b -rkmax {rkmax} -numk {numk} "
-        f"-ecut {ecut_abs} {pflag}"
-    )
-    _run_cmd(cmd, timeout=300, desc="init_lapw")
+    args = ["init_lapw", "-b", "-rkmax", str(rkmax), "-numk", str(numk),
+            "-ecut", str(ecut_abs)]
+    if parallel:
+        args.append("-p")
+    _run_cmd(args, timeout=300, desc="init_lapw")
 
 
 def _run_scf(basename, parallel):
-    pflag = "-p" if parallel else ""
-    cmd = f"run_lapw {pflag} -ec 0.0001 -cc 0.001"
-    _run_cmd(cmd, timeout=3600, desc="SCF")
+    args = ["run_lapw", "-ec", "0.0001", "-cc", "0.001"]
+    if parallel:
+        args.append("-p")
+    _run_cmd(args, timeout=3600, desc="SCF")
 
 
 def _read_energy(case_file):
@@ -284,6 +286,10 @@ def _update_struct_rmt(basename, structure, rmt_values):
             f"Y={atom.position[1]:.10f} Z={atom.position[2]:.10f}"
         )
         lines.append(f"          MULT= {atom.mult:2d}          ISPLIT= {atom.isplit:2d}")
+        for nidx, ep in enumerate(atom.equivalent_positions, start=2):
+            lines.append(
+                f"{nidx:4d}: X={ep[0]:.10f} Y={ep[1]:.10f} Z={ep[2]:.10f}"
+            )
         lines.append(
             f"{atom.element:10}        NPT=  781  "
             f"R0=0.00010000 RMT=    {rm:10.5f}   Z: {atom.z:.1f}"

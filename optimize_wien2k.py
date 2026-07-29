@@ -28,6 +28,9 @@ from optim_wien.core_valence import optimize_core_valence
 from optim_wien.input_generator import generate_all_inputs
 from optim_wien.report import generate_report, write_optimized_struct
 from optim_wien.convergence import auto_converge, wien2k_available, ConvergenceResult
+from optim_wien.converge import (
+    build_convergence_report, ConvergenceEngineResult, DEFAULT_ETOL,
+)
 from optim_wien.cli import (
     InteractiveWizard, ProgressTracker,
     box, header, section, info, warn, error, success, style, clear, echo,
@@ -61,6 +64,7 @@ Examples:
   python optimize_wien2k.py BaTiO3.struct                # quick run
   python optimize_wien2k.py BaTiO3.struct --precision high --refinement fine
   python optimize_wien2k.py Fe.struct --magnetic --precision very_high
+  python optimize_wien2k.py case.struct --converge rkmax,kmesh  # verify convergence
   python optimize_wien2k.py case.struct --auto-converge  # converge with WIEN2k
         """,
     )
@@ -92,6 +96,22 @@ Examples:
                         help="Enable spin-polarized calculation")
     parser.add_argument("--auto-converge", action="store_true",
                         help="Auto-converge k-mesh & RKMAX by running WIEN2k")
+    parser.add_argument("--converge", default=None, nargs="*",
+                        choices=["rmt", "rkmax", "kmesh", "gmax"],
+                        metavar="PARAM",
+                        help="Convergence-verified optimization. "
+                             "Comma-separated list of parameters: "
+                             "rmt rkmax kmesh gmax (default: rkmax kmesh)")
+    parser.add_argument("--etol", type=float, default=DEFAULT_ETOL,
+                        metavar="mRy/atom",
+                        help=f"Convergence tolerance in mRy/atom "
+                             f"(default: {DEFAULT_ETOL})")
+    parser.add_argument("--cluster-submit", action="store_true",
+                        help="Submit convergence jobs to HPC scheduler "
+                             "(requires submit callback)")
+    parser.add_argument("--converge-report", default=None, metavar="PATH",
+                        help="Path for convergence report (markdown). "
+                             "Default: <output>/<case>_convergence_report.md")
     parser.add_argument("--output", default="./optim_results",
                         help="Output directory")
     parser.add_argument("--no-input-files", action="store_true",
@@ -278,7 +298,94 @@ def _run_optimization(config, interactive=False):
         tracker.finish()
 
     conv_result = ConvergenceResult()
-    if args.auto_converge:
+    conv_engine = None
+
+    # ── NEW: Convergence-verified optimization (Aitken extrapolation) ──
+    if args.converge is not None:
+        converge_params_set = set(args.converge) if args.converge else {"rkmax", "kmesh"}
+        for_forces = args.calc_type in ("forces", "relaxation")
+
+        if not wien2k_available():
+            if not quiet:
+                warn("WIEN2k not found. Cannot run convergence engine.")
+                echo(style("       Use --auto-converge with WIEN2k installed.", fg="bright_black"))
+        else:
+            if not quiet:
+                header("CONVERGENCE-VERIFIED OPTIMIZATION", "bright_magenta")
+                info("Method", "Aitken Δ² extrapolation with SCF confirmation")
+                info("Parameters", ", ".join(sorted(converge_params_set)))
+                info("Tolerance", f"{args.etol:.2f} mRy/atom")
+                if for_forces:
+                    etol_eff = args.etol / 10.0
+                    info("Forces mode", f"etol tightened to {etol_eff:.2f} mRy/atom "
+                         "(Blaha 2020, Sec. III.B)")
+                echo()
+
+            from optim_wien.converge import run_convergence as _run_conv
+            try:
+                conv_engine = _run_conv(
+                    structure=structure,
+                    rmt_result=rmt_result,
+                    kmesh_result=kmesh_result,
+                    mixing_result=mixing_result,
+                    core_valence_result=core_valence_result,
+                    gmax_result=gmax_result,
+                    lmax_result=lmax_result,
+                    basename=basename,
+                    work_dir=os.path.abspath(args.output),
+                    converge_params=converge_params_set,
+                    etol_mRy_per_atom=args.etol,
+                    for_forces=for_forces,
+                    cluster_submit=args.cluster_submit,
+                    quiet=quiet,
+                )
+
+                # Override table values with converged values
+                if "rkmax" in converge_params_set and conv_engine.final_rkmax > 0:
+                    rkmax_result.rkmax = conv_engine.final_rkmax
+                if "kmesh" in converge_params_set and conv_engine.final_kmesh[0] > 0:
+                    kmesh_result.mesh = conv_engine.final_kmesh
+                    kmesh_result.total_points = (
+                        conv_engine.final_kmesh[0] *
+                        conv_engine.final_kmesh[1] *
+                        conv_engine.final_kmesh[2]
+                    )
+                if "gmax" in converge_params_set:
+                    gmax_result.gmax = conv_engine.final_gmax
+
+                # Generate convergence report
+                converge_rpt_path = args.converge_report
+                if converge_rpt_path is None:
+                    converge_rpt_path = os.path.join(
+                        args.output, f"{basename}_convergence_report.md"
+                    )
+                md_report = build_convergence_report(
+                    conv_engine, structure, struct_path=args.struct_file,
+                    calc_type=args.calc_type,
+                )
+                with open(converge_rpt_path, "w") as f:
+                    f.write(md_report)
+
+                if not quiet:
+                    echo()
+                    if conv_engine.converged:
+                        success(f"Converged. Report: {converge_rpt_path}")
+                    else:
+                        warn(f"Not fully converged — see report: {converge_rpt_path}")
+                    for w in conv_engine.warnings:
+                        warn(w)
+                    for e in conv_engine.errors:
+                        warn(f"  ERROR: {e}")
+
+            except RuntimeError as e:
+                if not quiet:
+                    warn(f"Convergence engine failed: {e}")
+                conv_engine = ConvergenceEngineResult(
+                    converged=False,
+                    errors=[str(e)],
+                )
+
+    elif args.auto_converge:
         if not wien2k_available():
             if not quiet:
                 warn("WIEN2k not found in PATH. Cannot auto-converge.")
@@ -397,7 +504,7 @@ def _show_results(rmt_result, rkmax_result, gmax_result, lmax_result,
     echo()
     section("Ready for WIEN2k")
     init_cmd = (f"init_lapw -b -rkmax {rkmax_result.rkmax} "
-                f"-numk {n1*100+n2*10+n3} "
+                f"-numk {n1*n2*n3} "
                 f"-ecut {int(abs(core_valence_result.ecut))}")
     echo(style(f"    $ {init_cmd}", fg="bright_black"))
     echo(style(f"    $ run_lapw -p", fg="bright_black"))
@@ -582,6 +689,10 @@ def main():
         "vxc": args.vxc,
         "magnetic": args.magnetic,
         "auto_converge": args.auto_converge,
+        "converge": args.converge,
+        "etol": args.etol,
+        "cluster_submit": args.cluster_submit,
+        "converge_report": args.converge_report,
         "output": args.output,
         "no_input_files": args.no_input_files,
         "quiet": args.quiet,

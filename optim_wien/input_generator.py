@@ -97,10 +97,11 @@ def _gen_in1(case, structure, rmt_result, rkmax_result, lmax_result,
              core_valence_result, calc_type):
     ecut_abs = abs(core_valence_result.ecut)
     vnmt = _v_nmt(len(structure.atoms), core_valence_result.use_hdlo)
+    global_lmax = max(lmax_result.lmax_values) if lmax_result.lmax_values else 6
 
     lines = [
         f"WFFIL        (WFPRI, SUPWF)",
-        f" {rkmax_result.rkmax:5.1f}      {vnmt}     "
+        f" {rkmax_result.rkmax:5.1f}  {global_lmax:4d}  {vnmt:4d}  "
         f"(R-MT*K-MAX; MAX L IN WF; V-NMT)",
         f"  0.30    5  0      (GLOBAL E-PARAMETER with n other choices, "
         f"global APW/LAPW)",

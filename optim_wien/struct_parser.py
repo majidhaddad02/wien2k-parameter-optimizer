@@ -18,7 +18,12 @@ class Atom:
     mult: int
     rmt: float
     position: list
+    equivalent_positions: list = field(default_factory=list)
     isplit: int = 0
+
+    @property
+    def all_positions(self):
+        return [self.position] + self.equivalent_positions
 
 
 @dataclass
@@ -104,6 +109,26 @@ class Structure:
         return sum(a.mult for a in self.atoms)
 
 
+def _is_equiv_position_line(line):
+    """Check if line is an equivalent position line like '    2: X=... Y=... Z=...'."""
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if re.match(r'^\d+\s*:', stripped) and 'X=' in stripped:
+        return True
+    return False
+
+
+def _is_element_line(line):
+    """Check if line is an element descriptor like 'Ba1   NPT=  781  ... Z: 56.0'."""
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if any(kw in stripped for kw in ('NPT=', 'Z:')):
+        return True
+    return False
+
+
 def parse_struct(filepath: str) -> Structure:
     with open(filepath, "r") as f:
         lines = [l.rstrip("\n").rstrip("\r") for l in f]
@@ -162,6 +187,26 @@ def parse_struct(filepath: str) -> Structure:
                 isplit = int(im.group(1))
             idx += 1
 
+        equiv_positions = []
+        while idx < len(lines):
+            peek = lines[idx]
+            if _is_equiv_position_line(peek):
+                epm = re.search(
+                    r"X\s*=\s*([0-9.eE+\-]+)\s+Y\s*=\s*([0-9.eE+\-]+)\s+Z\s*=\s*([0-9.eE+\-]+)",
+                    peek
+                )
+                if epm:
+                    equiv_positions.append(
+                        [float(epm.group(i)) for i in (1, 2, 3)]
+                    )
+                idx += 1
+            elif _is_element_line(peek):
+                break
+            elif re.match(r'^\s*$', peek):
+                idx += 1
+            else:
+                break
+
         element = ""
         z_val = 0
         rmt_val = 2.0
@@ -211,6 +256,7 @@ def parse_struct(filepath: str) -> Structure:
             mult=mult,
             rmt=rmt_val,
             position=pos,
+            equivalent_positions=equiv_positions,
             isplit=isplit,
         )
         s.atoms.append(atom)
@@ -218,33 +264,58 @@ def parse_struct(filepath: str) -> Structure:
     return s
 
 
-def compute_pairwise_min_distances(structure: Structure):
-    """Min distance between every pair of atoms including [-2,-1,0,1,2] cell images."""
-    import math as _math
-    a_vec, b_vec, c_vec = structure.lattice_vectors
-    n = len(structure.atoms)
-    pairwise = {}
+def _expand_atoms(structure):
+    """Expand all atoms into individual positions (primary + equivalents)."""
+    expanded = []
+    for atom_idx, atom in enumerate(structure.atoms):
+        for pos in atom.all_positions:
+            expanded.append((atom_idx, pos))
+    return expanded
 
-    for i in range(n):
-        ri = structure.atoms[i].position
-        for j in range(i + 1, n):
-            rj = structure.atoms[j].position
-            md = float("inf")
+
+def _cart_distance(p1, p2, a_vec, b_vec, c_vec):
+    """Cartesian distance between two fractional positions under lattice vectors."""
+    da = p1[0] - p2[0]
+    db = p1[1] - p2[1]
+    dc = p1[2] - p2[2]
+    x = da * a_vec[0] + db * b_vec[0] + dc * c_vec[0]
+    y = da * a_vec[1] + db * b_vec[1] + dc * c_vec[1]
+    z = da * a_vec[2] + db * b_vec[2] + dc * c_vec[2]
+    return math.sqrt(x * x + y * y + z * z)
+
+
+def compute_pairwise_min_distances(structure):
+    """Min distance between every pair of non-equivalent atoms, including
+    [-2,-1,0,1,2] cell images and all equivalent positions of MULT>1 atoms."""
+    a_vec, b_vec, c_vec = structure.lattice_vectors
+    expanded = _expand_atoms(structure)
+
+    n_nequiv = len(structure.atoms)
+    pairwise = {}
+    for i in range(n_nequiv):
+        for j in range(i + 1, n_nequiv):
+            pairwise[(i, j)] = float("inf")
+            pairwise[(j, i)] = float("inf")
+
+    for ai, pi in expanded:
+        for aj, pj in expanded:
+            if ai == aj:
+                continue
             for na in (-2, -1, 0, 1, 2):
                 for nb in (-2, -1, 0, 1, 2):
                     for nc in (-2, -1, 0, 1, 2):
-                        dx = (ri[0] - rj[0] - na) * a_vec[0] \
-                           + (ri[1] - rj[1] - nb) * b_vec[0] \
-                           + (ri[2] - rj[2] - nc) * c_vec[0]
-                        dy = (ri[0] - rj[0] - na) * a_vec[1] \
-                           + (ri[1] - rj[1] - nb) * b_vec[1] \
-                           + (ri[2] - rj[2] - nc) * c_vec[1]
-                        dz = (ri[0] - rj[0] - na) * a_vec[2] \
-                           + (ri[1] - rj[1] - nb) * b_vec[2] \
-                           + (ri[2] - rj[2] - nc) * c_vec[2]
-                        d = _math.sqrt(dx*dx + dy*dy + dz*dz)
-                        if d < md:
-                            md = d
-            pairwise[(i, j)] = md
-            pairwise[(j, i)] = md
+                        shifted_pj = [pj[0] + na, pj[1] + nb, pj[2] + nc]
+                        d = _cart_distance(pi, shifted_pj, a_vec, b_vec, c_vec)
+                        if d < pairwise[(ai, aj)]:
+                            pairwise[(ai, aj)] = d
+                            pairwise[(aj, ai)] = d
+
+    for i in range(n_nequiv):
+        check_j = i + 1 if i + 1 < n_nequiv else 0
+        if pairwise.get((i, check_j), float("inf")) == float("inf"):
+            for j in range(n_nequiv):
+                if j != i:
+                    pairwise[(i, j)] = 10.0
+                    pairwise[(j, i)] = 10.0
+
     return pairwise

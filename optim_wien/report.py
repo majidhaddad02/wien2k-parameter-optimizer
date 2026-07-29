@@ -207,7 +207,7 @@ def _summary_section(structure, rr, rkr, kr, gr, cr, mr):
     lines.append("")
     lines.append(f"Recommended WIEN2k init: "
                  f"init_lapw -b -rkmax {rkr.rkmax} "
-                 f"-numk {n1*100+n2*10+n3} "
+                 f"-numk {n1*n2*n3} "
                  f"-ecut {int(abs(cr.ecut))}")
     return "\n".join(lines)
 
@@ -233,6 +233,10 @@ def write_optimized_struct(structure, rmt_values, filepath):
         lines.append(f"ATOM {i+1:3d}: X={a.position[0]:.10f} "
                      f"Y={a.position[1]:.10f} Z={a.position[2]:.10f}")
         lines.append(f"          MULT= {a.mult:2d}          ISPLIT= {a.isplit:2d}")
+        for nidx, ep in enumerate(a.equivalent_positions, start=2):
+            lines.append(
+                f"{nidx:4d}: X={ep[0]:.10f} Y={ep[1]:.10f} Z={ep[2]:.10f}"
+            )
         lines.append(f"{a.element:10}        NPT=  781  "
                      f"R0=0.00010000 RMT=    {rm:10.5f}   Z: {a.z:.1f}")
         lines.append("LOCAL ROT MATRIX:    1.0000000 0.0000000 0.0000000")
