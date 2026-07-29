@@ -234,13 +234,19 @@ def write_optimized_struct(structure, rmt_values, filepath):
                      f"Y={a.position[1]:.10f} Z={a.position[2]:.10f}")
         lines.append(f"          MULT= {a.mult:2d}          ISPLIT= {a.isplit:2d}")
         for nidx, ep in enumerate(a.equivalent_positions, start=2):
+            sign = "-" if nidx > 2 else " "
             lines.append(
-                f"{nidx:4d}: X={ep[0]:.10f} Y={ep[1]:.10f} Z={ep[2]:.10f}"
+                f"      -{nidx}: X={ep[0]:.10f} Y={ep[1]:.10f} Z={ep[2]:.10f}"
             )
         lines.append(f"{a.element:10}        NPT=  781  "
                      f"R0=0.00010000 RMT=    {rm:10.5f}   Z: {a.z:.1f}")
-        lines.append("LOCAL ROT MATRIX:    1.0000000 0.0000000 0.0000000")
-        lines.append("                     0.0000000 1.0000000 0.0000000")
-        lines.append("                     0.0000000 0.0000000 1.0000000")
+        rot_lines = a.local_rot_lines
+        if rot_lines and len(rot_lines) >= 3:
+            for rl in rot_lines[:3]:
+                lines.append(rl)
+        else:
+            lines.append("LOCAL ROT MATRIX:    1.0000000 0.0000000 0.0000000")
+            lines.append("                     0.0000000 1.0000000 0.0000000")
+            lines.append("                     0.0000000 0.0000000 1.0000000")
     with open(filepath, "w") as f:
         f.write("\n".join(lines) + "\n")

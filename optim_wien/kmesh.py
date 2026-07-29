@@ -58,6 +58,19 @@ class KMeshResult:
     notes: list = field(default_factory=list)
 
 
+def _primitive_volume_factor(lattice_type):
+    lt = lattice_type.strip().upper()
+    if lt in ("F", "FCC", "CF"):
+        return 0.25
+    if lt in ("B", "BCC", "BC"):
+        return 0.50
+    if lt in ("CXY", "CYZ", "CXZ", "C"):
+        return 0.50
+    if lt in ("R",):
+        return 1.0 / 3.0
+    return 1.0
+
+
 def optimize_kmesh(structure, refinement="medium", system_type=None,
                    gamma_centered=None, bandgap=None):
     result = KMeshResult()
@@ -93,7 +106,7 @@ def optimize_kmesh(structure, refinement="medium", system_type=None,
         return result
 
     density = _K_DENSITY.get(st, 200)
-    V = structure.volume
+    V = structure.volume * _primitive_volume_factor(structure.lattice_type)
     Vbz = (2 * math.pi)**3 / max(V, 1e-10)
     target_total = max(1, density * Vbz)
 

@@ -288,15 +288,20 @@ def _update_struct_rmt(basename, structure, rmt_values):
         lines.append(f"          MULT= {atom.mult:2d}          ISPLIT= {atom.isplit:2d}")
         for nidx, ep in enumerate(atom.equivalent_positions, start=2):
             lines.append(
-                f"{nidx:4d}: X={ep[0]:.10f} Y={ep[1]:.10f} Z={ep[2]:.10f}"
+                f"      -{nidx}: X={ep[0]:.10f} Y={ep[1]:.10f} Z={ep[2]:.10f}"
             )
         lines.append(
             f"{atom.element:10}        NPT=  781  "
             f"R0=0.00010000 RMT=    {rm:10.5f}   Z: {atom.z:.1f}"
         )
-        lines.append("LOCAL ROT MATRIX:    1.0000000 0.0000000 0.0000000")
-        lines.append("                     0.0000000 1.0000000 0.0000000")
-        lines.append("                     0.0000000 0.0000000 1.0000000")
+        rot_lines = getattr(atom, 'local_rot_lines', None)
+        if rot_lines and len(rot_lines) >= 3:
+            for rl in rot_lines[:3]:
+                lines.append(rl)
+        else:
+            lines.append("LOCAL ROT MATRIX:    1.0000000 0.0000000 0.0000000")
+            lines.append("                     0.0000000 1.0000000 0.0000000")
+            lines.append("                     0.0000000 0.0000000 1.0000000")
 
     with open(f"{basename}.struct", "w") as f:
         f.write("\n".join(lines) + "\n")

@@ -1,6 +1,6 @@
 # WIEN2k Parameter Optimizer — User Guide
 
-**Author:** Dr. Majid Haddad
+**Author:** Majid Haddad
 **Email:** dr.majidhaddad@gmail.com
 **License:** MIT
 **Repository:** https://github.com/majidhaddad02/wien2k-parameter-optimizer

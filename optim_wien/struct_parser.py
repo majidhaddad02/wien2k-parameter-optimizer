@@ -20,6 +20,7 @@ class Atom:
     position: list
     equivalent_positions: list = field(default_factory=list)
     isplit: int = 0
+    local_rot_lines: list = field(default_factory=list)
 
     @property
     def all_positions(self):
@@ -110,11 +111,12 @@ class Structure:
 
 
 def _is_equiv_position_line(line):
-    """Check if line is an equivalent position line like '    2: X=... Y=... Z=...'."""
+    """Check if line is an equivalent position line like '    2: X=... Y=... Z=...'
+    or '-1: X=... Y=... Z=...' (negative index for non-cubic space groups)."""
     stripped = line.strip()
     if not stripped:
         return False
-    if re.match(r'^\d+\s*:', stripped) and 'X=' in stripped:
+    if re.match(r'^-?\d+\s*:', stripped) and 'X=' in stripped:
         return True
     return False
 
@@ -210,6 +212,7 @@ def parse_struct(filepath: str) -> Structure:
         element = ""
         z_val = 0
         rmt_val = 2.0
+        local_rot_lines = []
         if idx < len(lines):
             il = lines[idx].strip()
             ip = il.split()
@@ -241,10 +244,18 @@ def parse_struct(filepath: str) -> Structure:
             idx += 1
 
         while idx < len(lines):
-            la = lines[idx].strip()
-            if la.startswith("ATOM") or not la:
+            la = lines[idx].rstrip("\n").rstrip("\r")
+            if la.strip().upper().startswith("LOCAL ROT MATRIX"):
+                local_rot_lines.append(la)
+                idx += 1
+                for _ in range(2):
+                    if idx < len(lines):
+                        local_rot_lines.append(lines[idx].rstrip("\n").rstrip("\r"))
+                        idx += 1
+            elif la.strip().startswith("ATOM") or not la.strip():
                 break
-            idx += 1
+            else:
+                idx += 1
 
         if not element:
             continue
@@ -258,6 +269,7 @@ def parse_struct(filepath: str) -> Structure:
             position=pos,
             equivalent_positions=equiv_positions,
             isplit=isplit,
+            local_rot_lines=local_rot_lines,
         )
         s.atoms.append(atom)
 

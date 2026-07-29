@@ -215,10 +215,9 @@ def _gen_klist(case, kmesh_result):
         f"number of k-points",
         f"   -6  {inv_flag}     add INV" if inv_flag else f"   -6  0     no INV",
         f" {s1:5.2f} {s2:5.2f} {s3:5.2f}     shift",
-        "END",
     ]
     # Generate actual Monkhorst-Pack coordinates
-    # k_i = (2*j - n_i - 1) / (2*n_i) + s_i / n_i  for j = 0..n_i-1
+    # k_i = (2*j - n_i + 1) / (2*n_i) + s_i / n_i  for j = 0..n_i-1
     weight = 1.0 / (n1 * n2 * n3)
     for j in range(n1):
         kx = (2.0 * j - n1 + 1) / (2.0 * n1) + s1 / n1
@@ -229,5 +228,6 @@ def _gen_klist(case, kmesh_result):
                 lines.append(
                     f"{kx:12.8f} {ky:12.8f} {kz:12.8f} {weight:12.8f}"
                 )
+    lines.append("END")
     lines.append("")
     return "\n".join(lines)

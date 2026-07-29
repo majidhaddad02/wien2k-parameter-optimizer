@@ -449,7 +449,7 @@ def _run_optimization(config, interactive=False):
 
     if interactive and not quiet:
         echo()
-        _post_run_menu(args, config, rmt_result, rkmax_result,
+        _post_run_menu(args, config, structure, rmt_result, rkmax_result,
                        kmesh_result, core_valence_result, basename, has_critical)
 
     return _build_return(has_critical, has_final, args.quiet,
@@ -511,7 +511,7 @@ def _show_results(rmt_result, rkmax_result, gmax_result, lmax_result,
     echo()
 
 
-def _post_run_menu(args, config, rmt_result, rkmax_result,
+def _post_run_menu(args, config, structure, rmt_result, rkmax_result,
                    kmesh_result, core_valence_result, basename, has_critical):
     """Interactive menu after optimization completes."""
     while True:
