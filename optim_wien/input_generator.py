@@ -1,11 +1,13 @@
 """
 WIEN2k Input File Generator.
 
-Generates valid case.in0, case.in1, case.in2, case.inm, case.klist files
+Generates valid case.in0, case.in1, case.in1c, case.in2, case.inm,
+case.klist, case.in2c (hybrid functionals), and case.machines files
 based on optimized parameters.
 
 References:
   - WIEN2k User's Guide, Sections 4.2–4.6
+  - WIEN2k FAQ: http://www.wien2k.at/reg_user/faq/
 """
 
 import os
@@ -26,18 +28,11 @@ def generate_all_inputs(
     vxc_type=13,
     magnetic=False,
     spin_polarized=False,
+    vxc_label=None,
+    nproc_machines=0,
 ):
     os.makedirs(output_dir, exist_ok=True)
     files = {}
-
-    if rmt_result.core_leakage_warnings:
-        lcore_path = os.path.join(output_dir, f"{basename}.lcore")
-        with open(lcore_path, "w") as f:
-            f.write(f"# Core leakage detected — proper superposition of core "
-                    f"densities.\n")
-            f.write(f"# See :NEC01 in case.scf and "
-                    f"http://www.wien2k.at/reg_user/faq/rmt.html\n")
-        files["lcore"] = lcore_path
 
     in0 = _gen_in0(basename, gmax_result, vxc_type, spin_polarized, calc_type)
     fpath = os.path.join(output_dir, f"{basename}.in0")
@@ -75,6 +70,18 @@ def generate_all_inputs(
     with open(fpath, "w") as f:
         f.write(klist)
     files["klist"] = fpath
+
+    if vxc_label and vxc_label.upper() == "HSE":
+        in2c = _gen_in2c(basename, rkmax_result.rkmax, lmax_result)
+        fpath = os.path.join(output_dir, f"{basename}.in2c")
+        with open(fpath, "w") as f:
+            f.write(in2c)
+        files["in2c"] = fpath
+
+    if nproc_machines > 0:
+        from .submit import generate_machines
+        mpath = generate_machines(basename, nproc_machines, output_dir)
+        files["machines"] = mpath
 
     return files
 
@@ -230,4 +237,25 @@ def _gen_klist(case, kmesh_result):
                 )
     lines.append("END")
     lines.append("")
+    return "\n".join(lines)
+
+
+def _gen_in2c(case, rkmax, lmax_result):
+    """Generate case.in2c for hybrid functional (HSE) calculations.
+
+    Hybrid functionals in WIEN2k require in2c for the exact-exchange
+    part of the calculation. The FOCK operator replaces the Coulomb
+    potential and requires a separate cutoff specification.
+
+    Reference: WIEN2k User's Guide, Section 4.10 (hybrid functionals)
+    """
+    global_lmax = max(lmax_result.lmax_values) if lmax_result.lmax_values else 6
+    lines = [
+        f"TOT             ({case})",
+        f" 0.30    5  0      (E-param with n other choices, global APW/LAPW)",
+        f" {rkmax:5.1f}  {global_lmax:4d}        (RKMAX; GLOBAL LMAX FOR FOCK OPERATOR)",
+        "  0    0    0        (FOCK-CONTROL: 0=normal Fock exchange)",
+        "  0.25               (MIXING parameter for hybrid functional)",
+        "",
+    ]
     return "\n".join(lines)

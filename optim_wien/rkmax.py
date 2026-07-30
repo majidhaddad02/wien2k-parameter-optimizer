@@ -21,7 +21,7 @@ class RKMAXOptimizationResult:
     hydrogen_note: str = ""
 
 
-def optimize_rkmax(atoms, rmt_values, precision=Precision.MEDIUM):
+def optimize_rkmax(atoms, rmt_values, precision=Precision.MEDIUM, strict_faq=False):
     result = RKMAXOptimizationResult()
 
     r_min = min(rmt_values)
@@ -32,7 +32,12 @@ def optimize_rkmax(atoms, rmt_values, precision=Precision.MEDIUM):
     result.min_element = el
     result.base_rkmax = RKMAX_TABLE.get(el, 7.0)
 
-    if el == "H" and r_min < 0.7:
+    if strict_faq:
+        result.rkmax = result.base_rkmax
+        result.warnings.append(
+            f"Strict-FAQ mode: RKMAX={result.base_rkmax} (table value, no offset)."
+        )
+    elif el == "H" and r_min < 0.7:
         offset = RKMAX_OFFSET_H_SMALL.get(precision, 0.0)
         result.rkmax = round(result.base_rkmax + offset, 1)
         result.hydrogen_note = (

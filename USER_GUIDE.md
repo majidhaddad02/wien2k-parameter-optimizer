@@ -1,7 +1,7 @@
 # WIEN2k Parameter Optimizer — User Guide
 
 **Author:** Majid Haddad
-**Email:** dr.majidhaddad@gmail.com
+**Email:** majidhaddad@gmail.com
 **License:** MIT
 **Repository:** https://github.com/majidhaddad02/wien2k-parameter-optimizer
 
@@ -34,36 +34,43 @@ The **WIEN2k Parameter Optimizer** automatically determines all preprocessing pa
 
 **What it does:**
 
-- Reads your `case.struct` file (including MULT>1 equivalent positions)
+- Reads your `case.struct` file (including MULT>1 equivalent positions with negative indices)
 - Computes pairwise nearest-neighbour distances using all symmetry-equivalent sites
 - Optimizes **RMT** (muffin-tin radii) through four strict physical constraints
-- Determines **RKMAX** (plane-wave cutoff) using element-specific tables as seed
+- Determines **RKMAX** (plane-wave cutoff) using Blaha 2020 Table I as seed (5 elements); all others default to 7.0
 - Computes **GMAX** (Fourier expansion cutoff for charge density)
-- Sets **LMAX/LVNS** (angular momentum cutoffs per atom)
+- Sets **LMAX/LVNS** (angular momentum cutoffs per atom: sp=6, d=10, f=12)
 - Generates adaptive **k-point mesh** with correct Monkhorst-Pack formula
-- Configures **SCF mixing scheme** (PRATT/MSR1a/MSEC1) and Fermi smearing
-- Sets **core-valence separation** (Ecut and HDLO recommendations)
-- Generates all WIEN2k input files (`in0`, `in1`, `in1c`, `in2`, `inm`, `klist`)
+- Configures **SCF mixing scheme** (PRATT/MSR1a/MSEC1) and Fermi smearing (TEMP)
+- Sets **core-valence separation** (Ecut per precision, HDLO for large RMT)
+- Generates all WIEN2k input files: `in0`, `in1`, `in1c`, `in2`, `inm`, `klist`, `machines`, `in2c` (HSE)
 - **NEW:** Convergence-verified optimization — Aitken Δ² extrapolation with SCF confirmation
+- **NEW:** Submit script generation (SLURM, PBS)
+- **NEW:** Strict-FAQ mode (no precision offsets)
+- **NEW:** HSE hybrid functional support
 
-**Two optimization approaches:**
+**Three optimization approaches:**
 
 | Mode | Flag | Description |
 |------|------|-------------|
 | Table-based (fast) | default | Uses element-specific reference tables — runs instantly, no WIEN2k needed |
-| Convergence-verified | `--converge rkmax,kmesh` | Runs real SCF, fits exponential convergence model, confirms via extra SCF — requires WIEN2k |
+| Convergence-verified | `--converge rkmax kmesh` | Runs real SCF, fits exponential convergence model, confirms via extra SCF — requires WIEN2k |
 | Legacy auto-converge | `--auto-converge` | Linear sweep — slower, kept for backwards compatibility |
 
 **Scientific foundation:** Based on the WIEN2k FAQ (Blaha, Schwarz, Luitz), *J. Chem. Phys. 152, 074101 (2020)*, and the official WIEN2k user's guide.
+
+**Provenance note on reference tables:**
+- **RKMAX_TABLE:** Only 5 values are from Blaha 2020 Table I (C=5.5, N=6.5, O=7.0, Fe=8.0, Cu=8.0). All other elements default to 7.0 (WIEN2k's built-in default). There is no published RKMAX table for all 103 elements — any such table would be fabricated.
+- **INITIAL_RMT:** Heuristic defaults based on common WIEN2k workshop practice. These are NOT from a published table. When your struct file already has RMT >= 1.0, the tool keeps your values.
 
 ---
 
 ## 2. Quick Start
 
 ```bash
-# Install (one command)
-./install.sh --here
-export PATH="$(pwd):$PATH"
+# Install (editable mode recommended)
+cd /path/to/wien2k-parameter-optimizer
+pip install -e .
 
 # Run — auto-detects *.struct in current directory
 opt_wien2k
@@ -75,55 +82,44 @@ opt_wien2k BaTiO3.struct
 opt_wien2k -i
 
 # Convergence-verified (Aitken extrapolation — fast)
-opt_wien2k BaTiO3.struct --converge rkmax,kmesh --etol 1.0
+opt_wien2k BaTiO3.struct --converge rkmax kmesh --etol 1.0
 ```
 
-That's it. The optimizer reads your struct file, optimizes all parameters, and writes input files to `./optim_results/`.
+The optimizer reads your struct file, optimizes all parameters, and writes input files to `./optim_results/`.
 
 ---
 
 ## 3. Installation
 
-### Method A: Local alias (recommended for single user)
+### Method A: Editable install (recommended for development)
 
 ```bash
 cd /path/to/wien2k-parameter-optimizer
-./install.sh --here
-echo 'export PATH="/path/to/wien2k-parameter-optimizer:$PATH"' >> ~/.bashrc
-source ~/.bashrc
+pip install -e .
+opt_wien2k --help
 ```
 
-### Method B: User install via pip
+### Method B: System-wide install
 
 ```bash
-./install.sh --user
-# Binary installed to ~/.local/bin/opt_wien2k
-```
-
-### Method C: System-wide (requires root)
-
-```bash
-sudo ./install.sh --system
-# Binary installed to /usr/local/bin/opt_wien2k
-```
-
-### Method D: Custom prefix
-
-```bash
-./install.sh --prefix /opt/local
-# Binary installed to /opt/local/bin/opt_wien2k
+pip install /path/to/wien2k-parameter-optimizer
 ```
 
 ### Dependencies
 
-- **Python 3.8+** (standard library only — no pip packages required)
+- **Python 3.8+** (standard library only — no pip packages required for core)
+- **pytest** (only needed to run unit tests)
 - **WIEN2k** (only required for `--converge` or `--auto-converge` modes)
 
-### Uninstall
+### Run tests
 
 ```bash
-./install.sh --uninstall
+make test
+# or
+python3 -m pytest tests/ -v
 ```
+
+All 31 tests use only the standard library (no external test data files needed).
 
 ---
 
@@ -135,7 +131,7 @@ sudo ./install.sh --system
 opt_wien2k BaTiO3.struct
 ```
 
-### Auto-detect struct file (simplest)
+### Auto-detect struct file
 
 ```bash
 # If only one *.struct file exists in the current directory:
@@ -165,6 +161,20 @@ opt_wien2k BaTiO3.struct --output ./my_results
 opt_wien2k BaTiO3.struct --quiet
 ```
 
+### Strict-FAQ mode (no precision offsets)
+
+```bash
+opt_wien2k Si.struct --strict-faq
+# Uses table values directly. GMAX=12.0, RKMAX=table_value, no precision adjustment.
+```
+
+### Override init_lapw -prec flag
+
+```bash
+opt_wien2k Si.struct --prec 2
+# Equivalent to: init_lapw -b -rkmax 7.0 -numk 125 -ecut 6 -prec 2
+```
+
 ### Known band gap override
 
 ```bash
@@ -173,6 +183,23 @@ opt_wien2k BaTiO3.struct --bandgap 0
 
 # Force insulator treatment
 opt_wien2k Si.struct --bandgap 1.5
+```
+
+### Generate submit script and machines file
+
+```bash
+# SLURM with 16 processes
+opt_wien2k Si.struct --machines 16 --submit slurm
+
+# PBS with 32 processes (magnetic Fe)
+opt_wien2k Fe.struct --magnetic --machines 32 --submit pbs
+```
+
+### HSE hybrid functional
+
+```bash
+opt_wien2k Si.struct --vxc hse
+# Generates Si.in2c with FOCK operator parameters
 ```
 
 ---
@@ -224,21 +251,25 @@ After optimization completes in interactive mode, you can:
 | `--calc-type` | scf, forces, relaxation, optimization, eos, efg | scf | WIEN2k calculation type |
 | `--precision` | screening, coarse, medium, high, very_high | medium | Accuracy level |
 | `--refinement` | coarse, medium, fine, very_fine | medium | k-mesh density multiplier |
-| `--system-type` | metal_small, semiconductor, insulator, ... | auto | Override auto-detected system type |
-| `--bandgap` | float (eV) | none | Known band gap — 0=metal, <1=semiconductor, ≥1=insulator |
+| `--system-type` | metal_small, semiconductor, insulator, metal_large, insulator_large, surface, molecule | auto | Override auto-detected system type |
+| `--bandgap` | float (eV) | none | Known band gap — 0=metal, <1=semiconductor, >=1=insulator |
 | `--vxc` | pbe, lda, wc, pbesol, scan, hse | pbe | Exchange-correlation functional |
 | `--magnetic` | — | off | Enable spin-polarized calculation |
 | `--output` | directory path | ./optim_results | Output directory |
 | `--no-input-files` | — | off | Skip generating input files |
 | `--quiet` | — | off | Minimal console output |
 | `--only` | rmt, rkmax, gmax, lmax, kmesh, mixing, core | all | Run only specified step(s) |
+| `--strict-faq` | — | off | Strict FAQ mode: use table values directly, no precision offsets |
+| `--prec` | 0, 1, 2, 3 | auto | init_lapw -prec flag (0=fastest, 3=most accurate) |
+| `--machines` | int | 0 | Generate case.machines for N parallel processes |
+| `--submit` | slurm, pbs | none | Generate job submission script |
 
-### Convergence-verified optimization flags (NEW)
+### Convergence-verified optimization flags
 
 | Flag | Values | Default | Description |
 |------|--------|---------|-------------|
 | `--converge` | rmt, rkmax, kmesh, gmax | rkmax kmesh | Parameters to converge via Aitken extrapolation |
-| `--etol` | float | 1.0 | Convergence tolerance in mRy/atom |
+| `--etol` | float (mRy/atom) | 1.0 | Convergence tolerance. Auto-tightened 10x for forces |
 | `--cluster-submit` | — | off | Submit convergence jobs to HPC scheduler |
 | `--converge-report` | path | auto | Path for markdown convergence report |
 
@@ -259,21 +290,21 @@ The `--only` flag runs one or more specific optimization steps, automatically re
 opt_wien2k BaTiO3.struct --only rmt
 
 # Only optimize plane-wave cutoff (RMT runs silently as dependency)
-opt_wien2k --only rkmax
+opt_wien2k BaTiO3.struct --only rkmax
 
 # Multiple steps
-opt_wien2k --only rmt kmesh
+opt_wien2k BaTiO3.struct --only rmt kmesh
 
 # Core-valence separation only (RMT as silent dependency)
-opt_wien2k --only core
+opt_wien2k BaTiO3.struct --only core
 ```
 
 **Available steps:** `rmt` `rkmax` `gmax` `lmax` `kmesh` `mixing` `core`
 
 **Dependency resolution:**
-- `rkmax`, `gmax`, `lmax`, `core` → need `rmt` (runs silently)
-- `mixing` → needs `kmesh` (runs silently)
-- `rmt`, `kmesh` → no dependencies
+- `rkmax`, `gmax`, `lmax`, `core` -> need `rmt` (runs silently)
+- `mixing` -> needs `kmesh` (runs silently)
+- `rmt`, `kmesh` -> no dependencies
 
 Even in single-step mode, a full report and input files are generated using recommended defaults for non-selected steps.
 
@@ -281,41 +312,46 @@ Even in single-step mode, a full report and input files are generated using reco
 
 ## 8. Convergence-Verified Optimization
 
-The `--converge` flag replaces blind trust in lookup tables with a minimal number of real WIEN2k SCF runs, Aitken Δ² extrapolation, and explicit confirmation steps.
+The `--converge` flag replaces blind trust in lookup tables with a minimal number of real WIEN2k SCF runs, Aitken Delta^2 extrapolation, and explicit confirmation steps.
 
 ### Method
 
 **Governing principle:** every "converged" number in the final report must be traceable to actual `.scf` output — never to a table or curve fit alone.
 
-The Aitken Δ² process (Aitken, 1926) accelerates linearly convergent sequences:
+The Aitken Delta^2 process (Aitken, 1926) accelerates linearly convergent sequences:
+
 ```
-E_inf = E3 - (E3 - E2)² / (E3 - 2·E2 + E1)
+E_inf = E3 - (E3 - E2)^2 / (E3 - 2*E2 + E1)
 ```
-for three equally-spaced parameter values (x, x+h, x+2h).
+
+for three equally-spaced parameter values (x, x+h, x+2h). Points are run in parallel with loose SCF criteria, then a single confirmation run uses production criteria.
 
 ### Usage
 
 ```bash
 # Converge RKMAX and k-mesh with 1 mRy/atom tolerance
-opt_wien2k BaTiO3.struct --converge rkmax,kmesh --etol 1.0
+opt_wien2k BaTiO3.struct --converge rkmax kmesh --etol 1.0
 
 # Converge all parameters, tighter tolerance for forces
-opt_wien2k Si.struct --calc-type forces --converge rmt,rkmax,kmesh,gmax --etol 0.1
+opt_wien2k Si.struct --calc-type forces --converge rmt rkmax kmesh gmax --etol 0.1
 
 # Submit convergence jobs to HPC
-opt_wien2k Fe.struct --magnetic --converge rkmax,kmesh --cluster-submit
+opt_wien2k Fe.struct --magnetic --converge rkmax kmesh --cluster-submit
 
 # Custom report path
-opt_wien2k case.struct --converge rkmax,kmesh --converge-report converge_report.md
+opt_wien2k case.struct --converge rkmax kmesh --converge-report converge_report.md
+
+# Strict-FAQ mode with convergence
+opt_wien2k Si.struct --strict-faq --converge rkmax kmesh
 ```
 
 ### RKMAX convergence
 
-1. **Seed:** 3 points from `RKMAX_TABLE` — x0, x0+1, x0+2 (equally spaced)
-2. **SCF:** runs all 3 in parallel (loose criteria: `-ec 0.001 -cc 0.005`)
-3. **Fit:** Aitken Δ² → extrapolated E_inf, decay rate α, amplitude A
-4. **Predict:** solve `|A|·exp(-α·x) < etol` → predicted RKMAX (rounded UP to 0.5)
-5. **Confirm:** one SCF at predicted RKMAX (production criteria: `-ec 0.0001 -cc 0.001`)
+1. **Seed:** 3 points from `RKMAX_TABLE` — x0, x0+1, x0+2 (equally spaced, loose criteria)
+2. **SCF:** runs all 3 in parallel (loose: `-ec 0.001 -cc 0.005`)
+3. **Fit:** Aitken Delta^2 -> extrapolated E_inf, decay rate alpha, amplitude A
+4. **Predict:** solve `|A|*exp(-alpha*x) < etol` -> predicted RKMAX (rounded UP to 0.5)
+5. **Confirm:** one SCF at predicted RKMAX (production: `-ec 0.0001 -cc 0.001`)
 6. **Fallback:** if confirmation fails, add point + refit via exponential least-squares (up to 6 points)
 7. **Report:** all raw data, fit parameters, residual, SCF-count comparison
 
@@ -327,7 +363,7 @@ opt_wien2k case.struct --converge rkmax,kmesh --converge-report converge_report.
 
 ### RMT robustness (not a sweep)
 
-RMT is a geometric packing constraint — there is no "RMT → ∞" limit. Instead, the tool runs a single robustness check: nudges the two hardest-constrained atoms' RMTs down ~5%, reruns SCF, and confirms ΔE is negligible.
+RMT is a geometric packing constraint — there is no "RMT -> infty" limit. Instead, the tool runs a single robustness check: nudges the two hardest-constrained atoms' RMTs down ~5%, reruns SCF, and confirms DeltaE is negligible.
 
 ### GMAX verification (not a sweep)
 
@@ -335,14 +371,14 @@ GMAX is checked by parsing WIEN2k's own `.output2` warnings after the confirmati
 
 ### Efficiency
 
-A typical RKMAX convergence uses 4 SCF runs (3 seed + 1 confirm) instead of ~8 for a linear sweep — roughly **2× fewer** with Aitken extrapolation.
+A typical RKMAX convergence uses 4 SCF runs (3 seed + 1 confirm) instead of ~8 for a linear sweep — roughly **2x fewer** with Aitken extrapolation.
 
 ### Report
 
 A markdown report is generated containing:
 
 - Raw (parameter, energy) tables for each swept parameter
-- Fit used, its parameters (E_inf, α, A), and the confirmation residual
+- Fit used, its parameters (E_inf, alpha, A), and the confirmation residual
 - SCF-count comparison vs. naive brute-force baseline
 - All anomaly flags (non-monotonic, failed fit, smearing sensitivity)
 - Total wall-clock time
@@ -354,24 +390,24 @@ A markdown report is generated containing:
 | Parameter | Value |
 |-----------|-------|
 | RKMAX     | 9.5   |
-| k-mesh    | 10×10×10 (1000 pts) |
+| k-mesh    | 10x10x10 (1000 pts) |
 
 ## RKMAX Convergence
-| RKMAX | Energy (Ry) | ΔE (Ry) |
+| RKMAX | Energy (Ry) | DeltaE (Ry) |
 |-------|-------------|---------|
-| 6.0   | -100.9004   | —       |
+| 6.0   | -100.9004   | --      |
 | 7.0   | -100.9396   | -0.0392 |
 | 8.0   | -100.9634   | -0.0238 |
-| 9.5   | -100.9986   | -0.0352 |  ← confirmation
+| 9.5   | -100.9986   | -0.0352 |  <- confirmation
 
-**Aitken Δ² Extrapolation:**
-- E_inf = -101.0000 Ry, α = 0.500, Confirmation residual: 0.285 mRy/atom
-- Efficiency: 4 SCF runs vs. ~8 linear sweep — 2.0× fewer
+**Aitken Delta^2 Extrapolation:**
+- E_inf = -101.0000 Ry, alpha = 0.500, Confirmation residual: 0.285 mRy/atom
+- Efficiency: 4 SCF runs vs. ~8 linear sweep — 2.0x fewer
 ```
 
 ### Handling forces/phonon calculations
 
-For `--calc-type forces` or `relaxation`, the tolerance is automatically tightened 10× (e.g., 0.1 mRy/atom instead of 1.0). This is documented in the output with a citation to Blaha 2020, Sec. III.B: "forces converge ~10× more slowly with basis size than total energy."
+For `--calc-type forces` or `relaxation`, the tolerance is automatically tightened 10x (e.g., 0.1 mRy/atom instead of 1.0). This is documented in the output with a citation to Blaha 2020, Sec. III.B: "forces converge ~10x more slowly with basis size than total energy."
 
 ---
 
@@ -381,32 +417,34 @@ For `--calc-type forces` or `relaxation`, the tolerance is automatically tighten
 
 **Optimized through four strict conditions** from the WIEN2k FAQ:
 
-1. **Non-overlap:** `RMT(i) + RMT(j) ≤ 0.90 × NN_distance(i,j)`
-2. **Core leakage:** `:NEC01 < 0.002` electrons
-3. **Ratio balance:** `max(RMT) / min(RMT) ≤ 1.5` (~1.3 for sp-elements)
-4. **Structural margin:** RMT reduced for cells with free internal coordinates
+1. **Non-overlap:** `RMT(i) + RMT(j) <= 0.90 * NN_distance(i,j)` (SCF) or `0.85` (relaxation)
+2. **Core leakage:** `:NEC01` parsed from SCF output. Critical > 0.01 e- (auto-increase RMT 5%), warning > 0.002 e-, marginal > 0.001 e-
+3. **Ratio balance:** `max(RMT) / min(RMT) <= 1.5` (1.3 for sp-only systems)
+4. **Structural margin:** RMT reduced by 7% for relaxation/optimization/EOS calculations
 
 Nearest-neighbour distances are computed using **all symmetry-equivalent positions** (including MULT>1 equivalent sites in real WIEN2k struct files), not just the representative position.
 
+**Overwrite policy:** If your struct file has RMT < 1.0 bohr, the tool overwrites it with a heuristic default from INITIAL_RMT and warns you. If RMT >= 1.0, your value is preserved.
+
 ### RKMAX (Plane-Wave Cutoff)
 
-`RKMAX = Min(RMT) × K_max`
+`RKMAX = Min(RMT) x K_max`
 
-Reference values from Blaha's table (used as seed in `--converge` mode):
+Reference values from Blaha 2020 Table I:
 
-| Element Type | RKMAX | Notes |
-|-------------|-------|-------|
-| H, Li, Be, B | 3.0–5.0 | Very small atoms |
-| C, N, O, F | 6.5–7.0 | Electronegative, high electron density between spheres |
-| Si, P, S | 5.0–5.5 | sp-elements |
-| Na–Ca | 6.5 | Alkali/alkaline earth |
-| 3d TM (Sc–Zn) | 7.5–8.0 | d-elements |
-| 4d TM (Y–Cd) | 7.5–8.0 | Heavy d-elements |
-| 5d TM (Hf–Hg) | 8.0–8.5 | Very heavy d-elements |
-| Lanthanides | 8.0–8.5 | f-elements |
-| Actinides | 8.5 | 5f-elements |
+| Element | RKMAX | Source |
+|---------|-------|--------|
+| C | 5.5 | Blaha 2020, Table I |
+| N | 6.5 | Blaha 2020, Table I |
+| O | 7.0 | Blaha 2020, Table I |
+| Fe | 8.0 | Blaha 2020, Table I |
+| Cu | 8.0 | Blaha 2020, Table I |
+| All others | 7.0 | WIEN2k default |
 
-Effective RKMAX per atom: `RKMAX_eff(i) = RKMAX × Min(RMT) / RMT(i)`
+Effective RKMAX per atom: `RKMAX_eff(i) = RKMAX x RMT_min / RMT(i)`
+
+Precision offset applied on top of base RKMAX (unless `--strict-faq`):
+- screening: -1.0, coarse: -0.5, medium: 0.0, high: +0.5, very_high: +1.5
 
 ### GMAX (Fourier Expansion)
 
@@ -418,7 +456,13 @@ Effective RKMAX per atom: `RKMAX_eff(i) = RKMAX × Min(RMT) / RMT(i)`
 | high | 16.0 | Publication quality |
 | very_high | 20.0 | Benchmark quality |
 
-GMAX increases for systems containing H (RMT<0.8), Li (RMT<1.2), halogens (RMT<2.0), or f-elements (RMT<2.5).
+**Special cases (override precision table):**
+- H with RMT < 0.8: GMAX = 20.0
+- Li with RMT < 1.2: GMAX = 16.0
+- Halogens (F, Cl, Br, I) with RMT < 2.0: GMAX >= 16.0
+- f-elements with RMT < 2.5: GMAX = 16.0
+
+**Strict-FAQ mode:** returns GMAX = 12.0 (WIEN2k default) regardless of precision.
 
 ### LMAX/LVNS (Angular Momentum)
 
@@ -430,16 +474,18 @@ GMAX increases for systems containing H (RMT<0.8), Li (RMT<1.2), halogens (RMT<2
 
 **LVNS** (L-max for non-spherical contributions):
 - 4 for sp-only systems
-- 6 for systems with d-elements or large RMTs (> 2.2)
-- 8 for systems with f-elements
+- 6 for systems with d-elements or RMT > 2.2
+- 8 for systems with f-elements or RMT > 2.5
+
+**HDLO** (high-derivative local orbitals): recommended when RMT > 2.2 for d/f-elements, or RMT > 2.5 for any element.
 
 ### k-point Mesh
 
 Adaptive Monkhorst-Pack mesh based on reciprocal-space density:
 
 ```
-k_density = target points per bohr⁻³ (depends on system type)
-n_i = round(|b_i| × (k_density × V_BZ)^(1/3))
+k_density = target points per bohr^-3 (depends on system type)
+n_i = round(|b_i| x (k_density x V_BZ)^(1/3))
 ```
 
 | System Type | k-Density | Description |
@@ -450,34 +496,38 @@ n_i = round(|b_i| × (k_density × V_BZ)^(1/3))
 | metal_large | 300 | Large metallic supercells |
 | insulator_large | 10 | Very large insulating supercells |
 
+**Refinement multiplier:** coarse = 0.5, medium = 1.0, fine = 2.0, very_fine = 4.0
+
+**Bandgap override:** `--bandgap 0` forces metal treatment, `--bandgap >= 1.0` forces insulator treatment, `0 < bandgap < 1.0` forces semiconductor.
+
+**Auto-detect warning:** If no `--system-type` is given, the tool auto-detects. For surface/slab or molecule systems, pass `--system-type surface` or `--system-type molecule` explicitly.
+
 ### Mixing Scheme
 
-| System Type | Scheme | Mixing Factor | Notes |
-|-------------|--------|---------------|-------|
-| Insulator | PRATT | 0.25 | Fast convergence, no smearing |
-| Semiconductor | PRATT | 0.25 | Same as insulator |
-| Metal (small) | MSR1a | 0.20 | 0.001 Ry Fermi smearing |
-| Metal (large) | MSEC1 | 0.15 | 0.002 Ry Fermi smearing |
+| System Type | Scheme | Mixing Factor | TEMP (Ry) | Notes |
+|-------------|--------|---------------|-----------|-------|
+| Insulator | PRATT | 0.30 | 0.0001 | PRATT for gap > 1 eV |
+| Semiconductor | PRATT | 0.25 | 0.001 | PRATT for non-metals |
+| Metal (small) | MSR1a | 0.20 | 0.001 | Methfessel-Paxton, TETRA=101 |
+| Metal (large) | MSEC1 | 0.15 | 0.001 | Large cell, TETRA=101 |
+| Magnetic metal | MSEC1 | 0.15 | 0.002 | Magnetic + metallic |
 
-### TEMP (Fermi Smearing)
-
-| System | TEMP (Ry) |
-|--------|-----------|
-| Metals (small cell) | 0.001 |
-| Metals (large cell) | 0.002 |
-| Semiconductors/insulators | 0.001 |
+**SCF convergence criteria:**
+- econv: 0.0001 Ry (default), 0.00001 Ry (forces/EFG/high precision)
+- cconv: 0.001 Ry (default), 0.0001 Ry (forces/EFG)
+- max SCF cycles: 40 (default), 80 (metals)
 
 ### Core-Valence (Ecut)
 
-| Precision | Ecut (Ry) | HDLO |
-|-----------|-----------|------|
+| Precision | Ecut (Ry) | HDLO Trigger |
+|-----------|-----------|-------------|
 | screening | -4.0 | No |
 | coarse | -5.0 | No |
-| medium | -6.0 | For RMT > 2.5 |
-| high | -7.0 | For RMT > 2.2 |
-| very_high | -8.0 | For RMT > 2.0 |
+| medium | -6.0 | RMT > 2.2 (d/f) or > 2.5 (any) |
+| high | -7.0 | Same |
+| very_high | -8.0 | Same |
 
-**HDLO** (high-derivative local orbitals) recommended for atoms with large RMT to improve the linearization.
+**HDLO** (high-derivative local orbitals) are automatically recommended for atoms with large RMT to improve the linearization quality.
 
 ---
 
@@ -486,23 +536,27 @@ n_i = round(|b_i| × (k_density × V_BZ)^(1/3))
 | Type | Description | Convergence Note |
 |------|------------|-----------------|
 | `scf` | Self-consistent field (default) | Standard `--etol 1.0` |
-| `forces` | Forces and geometry relaxation | Auto-tightens etol 10×: `--etol 0.1` |
-| `relaxation` | Volume + positions / positions only | Auto-tightens etol 10× |
-| `optimization` | Internal positions only | Auto-tightens etol 10× |
-| `eos` | Equation of state (E vs V) | — |
-| `efg` | Electric field gradient | — |
+| `forces` | Forces and geometry relaxation | Auto-tightens etol 10x: `--etol 0.1` |
+| `relaxation` | Volume + positions / positions only | RMT reduced 7% for structural margin |
+| `optimization` | Internal positions only | RMT reduced 7% for structural margin |
+| `eos` | Equation of state (E vs V) | RMT reduced 7% for structural margin |
+| `efg` | Electric field gradient | econv tightened to 0.00001 Ry |
 
 ---
 
 ## 11. Precision Levels
 
-| Level | Ecut | GMAX | RKMAX Offset | Typical Use |
-|-------|------|------|-------------|-------------|
-| screening | -4.0 | 10.0 | -1.0 | Quick exploratory scans |
-| coarse | -5.0 | 12.0 | -0.5 | Rough estimates |
-| medium | -6.0 | 14.0 | 0.0 | Production quality |
-| high | -7.0 | 16.0 | +0.5 | Publication quality |
-| very_high | -8.0 | 20.0 | +1.5 | Benchmark quality |
+| Level | Ecut (Ry) | GMAX | RKMAX Offset | init_lapw -prec | Typical Use |
+|-------|----------|------|-------------|-----------------|-------------|
+| screening | -4.0 | 10.0 | -1.0 | 0 | Quick exploratory scans |
+| coarse | -5.0 | 12.0 | -0.5 | 0 | Rough estimates |
+| medium | -6.0 | 14.0 | 0.0 | 1 | Production quality |
+| high | -7.0 | 16.0 | +0.5 | 2 | Publication quality |
+| very_high | -8.0 | 20.0 | +1.5 | 3 | Benchmark quality |
+
+The `--prec` flag directly overrides the init_lapw -prec mapping shown above. Use it when you know exactly which parallelization level you need.
+
+The `--strict-faq` flag disables all precision offsets: RKMAX uses the raw table value, GMAX returns 12.0, and no precision adjustments are applied.
 
 ---
 
@@ -515,7 +569,7 @@ The `--auto-converge` flag runs a linear-sweep convergence cycle. It is kept for
 ```
 1. Run SCF with current RMTs
 2. Parse :NEC01 core leakage per atom
-3. If leakage > 0.002 e⁻ for any atom → increase RMT by 5%
+3. If leakage > 0.002 e- for any atom -> increase RMT by 5%
 4. Recheck non-overlap constraint
 5. Repeat until converged or max 5 iterations
 ```
@@ -524,9 +578,9 @@ The `--auto-converge` flag runs a linear-sweep convergence cycle. It is kept for
 
 ```
 1. Start with 1/2 of recommended mesh
-2. Compare ΔE between successive meshes
-3. Refine: ×1.0 → ×1.5 → ×2.0 → ×3.0 → ×4.0
-4. Stop when |ΔE| < 0.1 mRy
+2. Compare DeltaE between successive meshes
+3. Refine: x1.0 -> x1.5 -> x2.0 -> x3.0 -> x4.0
+4. Stop when |DeltaE| < 0.1 mRy
 ```
 
 ### RKMAX Convergence
@@ -534,8 +588,8 @@ The `--auto-converge` flag runs a linear-sweep convergence cycle. It is kept for
 ```
 1. Start at base_rkmax - 1.0
 2. Increment by 0.5 until max_rkmax
-3. Compare ΔE between successive RKMAX values
-4. Stop when |ΔE| < 0.1 mRy
+3. Compare DeltaE between successive RKMAX values
+4. Stop when |DeltaE| < 0.1 mRy
 ```
 
 ---
@@ -549,24 +603,32 @@ After optimization, the output directory contains:
 | `*_optimization_report.txt` | Full scientific report (10 sections) |
 | `*_convergence_report.md` | Convergence-verified markdown report (when `--converge` is used) |
 | `*.struct_optimized` | Optimized struct file — valid WIEN2k format with all equivalent positions |
-| `*.in0` | Core density / exchange-correlation input — valid 5-line WIEN2k format |
+| `*.in0` | Core density / exchange-correlation input — GMAX, NR2V header |
 | `*.in1` | Linearization energies per atom — RKMAX, LMAX, V-NMT header |
 | `*.in1c` | Core state linearization (WFFIL format) |
-| `*.in2` | SCF convergence parameters — TETRA 101, mixing, TEMP |
+| `*.in2` | SCF convergence parameters — TETRA 101, mixing, TEMP, econv, cconv |
+| `*.in2c` | (only for HSE hybrid functionals) FOCK operator parameters |
 | `*.inm` | Density initialization |
 | `*.klist` | k-point list — full Monkhorst-Pack coordinates with weights |
-| `*.lcore` | (only if core leakage detected) |
+| `*.machines` | (only with `--machines N`) Parallel process configuration |
+| `submit_*_slurm.sh` | (only with `--submit slurm`) SLURM job script |
+| `submit_*_pbs.pbs` | (only with `--submit pbs`) PBS job script |
 
 ### Ready for WIEN2k
 
 The tool prints the exact commands:
 
 ```
-$ init_lapw -b -rkmax 7.0 -numk 343 -ecut 7
+$ init_lapw -b -rkmax 7.0 -numk 125 -ecut 6
 $ run_lapw -p
 ```
 
-The `-numk` value = n1×n2×n3 (total k-points in the full BZ), correct for multi-digit meshes.
+If `--prec` is given, the init_lapw command includes the flag:
+```
+$ init_lapw -b -rkmax 7.0 -numk 125 -ecut 6 -prec 2
+```
+
+The `-numk` value = n1 x n2 x n3 (total k-points in the full BZ), correct for multi-digit meshes.
 
 ---
 
@@ -579,20 +641,20 @@ opt_wien2k Si.struct --precision high
 
 # Output:
 #   RMT: Si=2.000
-#   RKMAX: 5.5  |  GMAX: 16.0
-#   k-mesh: 5×5×5 (semiconductor, 125 pts)
+#   RKMAX: 7.5  |  GMAX: 16.0
+#   k-mesh: 5x5x5 (semiconductor, 125 pts)
 #   Ecut: -7.0 Ry  |  Mixing: PRATT 0.25
 ```
 
-### Example 2: Perovskite oxide (BaTiO₃)
+### Example 2: Perovskite oxide (BaTiO3)
 
 ```bash
 opt_wien2k BaTiO3.struct --precision very_high --refinement fine
 
 # Output:
 #   RMT: Ba=2.076, Ti=1.927, O=1.459
-#   RKMAX: 7.0  |  GMAX: 20.0
-#   k-mesh: 14×14×14 (2744 pts)
+#   RKMAX: 8.5  |  GMAX: 20.0
+#   k-mesh: 14x14x14 (2744 pts)
 #   Ecut: -8.0 Ry  |  Mixing: PRATT 0.25
 ```
 
@@ -603,15 +665,15 @@ opt_wien2k Fe.struct --magnetic --precision high
 
 # Output:
 #   RMT: Fe=2.100
-#   RKMAX: 8.0  |  GMAX: 16.0
-#   k-mesh: 12×12×12 (1728 pts, metal_small)
-#   TEMP: 0.001 Ry  |  Mixing: MSR1a 0.20
+#   RKMAX: 8.5  |  GMAX: 16.0
+#   k-mesh: 12x12x12 (1728 pts, metal_small)
+#   TEMP: 0.002 Ry  |  Mixing: MSEC1 0.15
 ```
 
 ### Example 4: Convergence-verified RKMAX + k-mesh
 
 ```bash
-opt_wien2k BaTiO3.struct --converge rkmax,kmesh --etol 1.0 --output ./converged
+opt_wien2k BaTiO3.struct --converge rkmax kmesh --etol 1.0 --output ./converged
 
 # Runs 4 RKMAX SCF + 4 k-mesh SCF + 1 confirmation = ~9 SCF total
 # Generates:
@@ -623,54 +685,83 @@ opt_wien2k BaTiO3.struct --converge rkmax,kmesh --etol 1.0 --output ./converged
 ### Example 5: Forces calculation with tight tolerance
 
 ```bash
-opt_wien2k Si.struct --calc-type forces --converge rkmax,kmesh
+opt_wien2k Si.struct --calc-type forces --converge rkmax kmesh
 
 # etol auto-tightened to 0.1 mRy/atom for forces
 ```
 
-### Example 6: Only optimize RMT and k-mesh
+### Example 6: Strict-FAQ mode with submit script
+
+```bash
+opt_wien2k Si.struct --strict-faq --machines 16 --submit slurm
+
+# Generates:
+#   Si.machines (16 processes)
+#   submit_Si_slurm.sh (SLURM script)
+#   Uses table values directly (no precision offsets)
+```
+
+### Example 7: Only optimize RMT and k-mesh
 
 ```bash
 opt_wien2k BaTiO3.struct --only rmt kmesh --no-input-files
 ```
 
-### Example 7: Interactive wizard with convergence
+### Example 8: HSE hybrid functional
+
+```bash
+opt_wien2k BaTiO3.struct --vxc hse --precision high
+
+# Generates BaTiO3.in2c with FOCK operator:
+#   TOT             (BaTiO3)
+#    0.30    5  0      (E-param with n other choices, global APW/LAPW)
+#    7.5     6         (RKMAX; GLOBAL LMAX FOR FOCK OPERATOR)
+#    0    0    0        (FOCK-CONTROL: 0=normal Fock exchange)
+#    0.25               (MIXING parameter for hybrid functional)
+```
+
+### Example 9: Interactive wizard with HPC setup
 
 ```bash
 opt_wien2k -i
 
 # Step-by-step wizard:
 #   1. Select Si.struct
-#   2. Calculation → Forces
-#   3. Precision → High
-#   4. k-mesh → Fine
-#   5. XC → PBE
-#   6. Magnetic → No
-#   7. Auto-converge → Yes
-#   8. Output → ./si_forces
-#   → Confirmation → Run
+#   2. Calculation -> Forces
+#   3. Precision -> High
+#   4. k-mesh -> Fine
+#   5. XC -> PBE
+#   6. Magnetic -> No
+#   7. Auto-converge -> No
+#   8. Output -> ./si_forces
+#   -> Confirmation -> Run
 ```
 
-### Example 8: EOS calculation
+### Example 10: EOS calculation with structural margin
 
 ```bash
 opt_wien2k Si.struct --calc-type eos --precision high
+
+# RMT automatically reduced by 7% for EOS volume scans
+# Output: Ecut=-7.0, GMAX=16.0, RKMAX=7.5
 ```
 
-### Example 9: Quick screening
+### Example 11: Transition metal oxide with surface type
 
 ```bash
-opt_wien2k --precision screening --no-input-files
+opt_wien2k BaTiO3.struct --system-type surface
+
+# k-mesh: 20x20x1 (surface slab)
 ```
 
-### Example 10: Multiple struct files in directory
+### Example 12: Multiple struct files in directory
 
 ```bash
 ls *.struct
 # BaTiO3.struct  Fe.struct  Si.struct
 
 opt_wien2k
-# ━━ MULTIPLE STRUCT FILES FOUND ━━
+# MULTIPLE STRUCT FILES FOUND
 #   [1] BaTiO3.struct
 #   [2] Fe.struct
 #   [3] Si.struct
@@ -697,10 +788,10 @@ The tool needs WIEN2k executables (`run_lapw`, `init_lapw`) for convergence mode
 **Solution:** Source the WIEN2k environment first:
 ```bash
 source /path/to/wien2k/wien2k_environment.sh
-opt_wien2k BaTiO3.struct --converge rkmax,kmesh
+opt_wien2k BaTiO3.struct --converge rkmax kmesh
 ```
 
-### "Aitken denominator ≈ 0" or "Decay ratio outside (0,1)" during convergence
+### "Aitken denominator approx 0" or "Decay ratio outside (0,1)" during convergence
 
 The 3-point extrapolation could not fit a valid exponential convergence model.
 
@@ -715,17 +806,17 @@ The 3-point extrapolation could not fit a valid exponential convergence model.
 The SCF runs did not produce monotonically decreasing energies with increasing basis size. This usually signals an SCF problem.
 
 **Solution:**
-1. Check your mixing scheme — metals need MSR1a/MSEC1, not PRATT
+1. Check your mixing scheme -- metals need MSR1a/MSEC1, not PRATT
 2. Verify the core-valence separation is correct
 3. Check for ghostbands or linearization errors
-4. The tool aborts extrapolation and flags for manual review — this is intentional
+4. The tool aborts extrapolation and flags for manual review -- this is intentional
 
-### "RMT ratio exceeds 1.5 — CRITICAL WARNING"
+### "RMT ratio exceeds 1.5 -- CRITICAL WARNING"
 
 The RMT optimization couldn't satisfy all four constraints simultaneously.
 
 **Solution:**
-1. Check your struct file — are the positions correct?
+1. Check your struct file -- are the positions correct?
 2. Try `--only rmt` to inspect the RMT values
 3. Use the interactive post-run menu to manually adjust RMTs
 4. For very tight structures, consider reducing RMT manually
@@ -738,6 +829,18 @@ The RMT optimization couldn't satisfy all four constraints simultaneously.
 3. Verify the struct file is valid WIEN2k format
 4. Check that `init_lapw` was run successfully
 
+### "Struct RMT < 1.0 -- overwritten with heuristic default"
+
+Your struct file contains an RMT value below 1.0 bohr, which is unphysically small for WIEN2k.
+
+**Solution:** Set the RMT to >= 1.0 in your struct file if you want to keep your value. The tool uses heuristic defaults when the struct value appears invalid.
+
+### "Same-element RMT warning"
+
+Multiple symmetry-inequivalent sites of the same element have different RMT values.
+
+**Solution:** The WIEN2k FAQ recommends chemically equivalent sites should have the same RMT. Review manually and adjust if needed. For surface calculations, same-element sites at different layers may intentionally have different RMTs.
+
 ---
 
 ## 16. References
@@ -748,19 +851,19 @@ The RMT optimization couldn't satisfy all four constraints simultaneously.
 
 2. **A.C. Aitken**
    *On Bernoulli's Numerical Solution of Algebraic Equations*
-   Proc. Royal Soc. Edinburgh, **46**, 289–305 (1926)
+   Proc. Royal Soc. Edinburgh, **46**, 289-305 (1926)
 
 3. **P. Blaha, K. Schwarz, G.K.H. Madsen, D. Kvasnicka, J. Luitz**
    *WIEN2k User's Guide, Version 19.1*
    http://susi.theochem.tuwien.ac.at/
 
-4. **WIEN2k FAQ — RMT**
+4. **WIEN2k FAQ -- RMT**
    http://www.wien2k.at/reg_user/faq/rmt.html
 
-5. **WIEN2k FAQ — RKMAX**
+5. **WIEN2k FAQ -- RKMAX**
    http://www.wien2k.at/reg_user/faq/rkmax.html
 
-6. **WIEN2k FAQ — k-point Generation**
+6. **WIEN2k FAQ -- k-point Generation**
    http://www.wien2k.at/reg_user/faq/kgen.html
 
 7. **L.D. Marks**

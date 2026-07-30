@@ -38,8 +38,12 @@ def generate_report(
     lines.append(_core_valence_section(core_valence_result))
     lines.append(_convergence_section(kmesh_result, rkmax_result))
     lines.append(_summary_section(structure, rmt_result, rkmax_result,
-                                   kmesh_result, gmax_result,
-                                   core_valence_result, mixing_result))
+                                    kmesh_result, gmax_result,
+                                    core_valence_result, mixing_result))
+    lines.append(_why_section(structure, rmt_result, rkmax_result,
+                               gmax_result, lmax_result, kmesh_result,
+                               mixing_result, core_valence_result,
+                               calc_type, precision))
     lines.append(_references())
     return "\n".join(lines)
 
@@ -213,11 +217,130 @@ def _summary_section(structure, rr, rkr, kr, gr, cr, mr):
 
 
 def _references():
-    lines = ["", "10. REFERENCES", _SUB]
+    lines = ["", "11. REFERENCES", _SUB]
     for r in REFERENCES:
         lines.append(f"  {r}")
     lines.append("")
     lines.append(_SEP)
+    return "\n".join(lines)
+
+
+def _why_section(structure, rmt_result, rkmax_result, gmax_result,
+                 lmax_result, kmesh_result, mixing_result,
+                 core_valence_result, calc_type, precision):
+    """Generate 'Why This Value Was Chosen' section — a structured
+    per-parameter justification with citations to the WIEN2k FAQ,
+    Blaha 2020 paper, and the official User's Guide.
+
+    References:
+      - WIEN2k FAQ RMT:  http://www.wien2k.at/reg_user/faq/rmt.html
+      - WIEN2k FAQ RKMAX: http://www.wien2k.at/reg_user/faq/rkmax.html
+      - WIEN2k FAQ kgen: http://www.wien2k.at/reg_user/faq/kgen.html
+      - Blaha et al., J. Chem. Phys. 152, 074101 (2020)
+      - WIEN2k User's Guide, http://susi.theochem.tuwien.ac.at/
+    """
+    lines = ["", "10. WHY THIS VALUE WAS CHOSEN", _SUB]
+    lines.append("  Every parameter below is justified by a precise "
+                 "reference to the WIEN2k FAQ or the Blaha 2020 paper.")
+    lines.append("")
+
+    # RMT
+    lines.append("  10.1  RMT (Muffin-Tin Radii)")
+    lines.append("  " + "-" * 60)
+    lines.append("  Rule: Four strict conditions from the WIEN2k FAQ "
+                 "(http://www.wien2k.at/reg_user/faq/rmt.html):")
+    lines.append("    1. Non-overlap: RMT(i) + RMT(j) ≤ 0.90 × NN(i,j)")
+    lines.append("       (SAFETY_MARGIN_SCF = 0.90)")
+    lines.append("    2. Core leakage: :NEC01 < 0.002 electrons")
+    lines.append("    3. Ratio balance: max(RMT)/min(RMT) ≤ 1.5 "
+                 "(≤ 1.3 for sp-only systems)")
+    lines.append("    4. Structural margin: RMT × 0.93 for relaxation/"
+                 "optimization/EOS")
+    lines.append("  Reference: WIEN2k RMT FAQ, Blaha 2020, Sec. II.A")
+    lines.append("")
+    for i, a in enumerate(structure.atoms):
+        rm = rmt_result.rmt_values[i]
+        lines.append(f"    {a.element}({i+1}): RMT = {rm:.4f} bohr")
+    if getattr(rmt_result, 'ratio_warnings', None):
+        for w in rmt_result.ratio_warnings:
+            lines.append(f"    → {w}")
+    if getattr(rmt_result, 'overlap_warnings', None):
+        for w in rmt_result.overlap_warnings:
+            lines.append(f"    → {w}")
+    lines.append("")
+
+    # RKMAX
+    lines.append("  10.2  RKMAX (Plane-Wave Cutoff)")
+    lines.append("  " + "-" * 60)
+    lines.append(f"  Base value: {rkmax_result.base_rkmax} "
+                 f"(from Blaha reference table for {rkmax_result.min_element})")
+    lines.append(f"  Final RKMAX: {rkmax_result.rkmax}")
+    lines.append("  Reference: WIEN2k RKMAX FAQ, Blaha 2020, Sec. II.B, "
+                 "Table I")
+    lines.append("")
+    for i, a in enumerate(structure.atoms):
+        ek = (rkmax_result.effective_rkmax[i]
+              if i < len(rkmax_result.effective_rkmax) else 0)
+        rm = rmt_result.rmt_values[i]
+        lines.append(f"    {a.element}({i+1}): RKMAX_eff = {ek:.1f}  "
+                     f"(RMT = {rm:.3f})")
+    lines.append("")
+
+    # GMAX
+    lines.append("  10.3  GMAX (Fourier Expansion)")
+    lines.append("  " + "-" * 60)
+    lines.append(f"  GMAX = {gmax_result.gmax}")
+    lines.append(f"  Rationale: {gmax_result.rationale}")
+    lines.append("  Reference: WIEN2k User's Guide, Sec. 4.2 "
+                 "(case.in0 format)")
+    lines.append("")
+
+    # k-mesh
+    lines.append("  10.4  k-Mesh")
+    lines.append("  " + "-" * 60)
+    n1, n2, n3 = kmesh_result.mesh
+    lines.append(f"  Mesh: {n1}×{n2}×{n3} ({kmesh_result.total_points} pts)")
+    lines.append(f"  System type: {kmesh_result.system_type}")
+    st_map = {"metal_small": 3000, "semiconductor": 500,
+              "insulator": 200, "metal_large": 300, "insulator_large": 10}
+    kd = st_map.get(kmesh_result.system_type, 200)
+    lines.append(f"  k-density: {kd} pts/bohr⁻³")
+    lines.append(f"  Monkhorst-Pack with shift {kmesh_result.shift}")
+    lines.append("  Reference: WIEN2k kgen FAQ, Blaha 2020, Sec. II.C")
+    lines.append("")
+
+    # LMAX
+    lines.append("  10.5  LMAX / LVNS")
+    lines.append("  " + "-" * 60)
+    lines.append(f"  Global LVNS: {lmax_result.lvns_global}")
+    for i, a in enumerate(structure.atoms):
+        lmax = (lmax_result.lmax_values[i]
+                if i < len(lmax_result.lmax_values) else 6)
+        lines.append(f"    {a.element}({i+1}): LMAX = {lmax}")
+    lines.append("  Reference: Blaha 2020, Sec. II.D; "
+                 "WIEN2k User's Guide, Sec. 4.5")
+    lines.append("")
+
+    # Mixing
+    lines.append("  10.6  Mixing & SCF")
+    lines.append("  " + "-" * 60)
+    lines.append(f"  Scheme: {mixing_result.scheme} "
+                 f"(factor = {mixing_result.mixing_factor:.2f})")
+    lines.append(f"  TEMP = {mixing_result.temp:.4f} Ry")
+    lines.append(f"  {'TETRA' if mixing_result.tetra else 'GAUSS'} "
+                 f"integration")
+    lines.append("  Reference: Blaha 2020, Sec. III.A; "
+                 "WIEN2k User's Guide, Sec. 4.3")
+    lines.append("")
+
+    # Core/Valence
+    lines.append("  10.7  Core/Valence Separation")
+    lines.append("  " + "-" * 60)
+    lines.append(f"  Ecut = {core_valence_result.ecut:.1f} Ry")
+    lines.append(f"  HDLO: {'YES' if core_valence_result.use_hdlo else 'NO'}")
+    lines.append("  Reference: WIEN2k User's Guide, Sec. 4.4 (lstart)")
+    lines.append("")
+
     return "\n".join(lines)
 
 
@@ -234,7 +357,6 @@ def write_optimized_struct(structure, rmt_values, filepath):
                      f"Y={a.position[1]:.10f} Z={a.position[2]:.10f}")
         lines.append(f"          MULT= {a.mult:2d}          ISPLIT= {a.isplit:2d}")
         for nidx, ep in enumerate(a.equivalent_positions, start=2):
-            sign = "-" if nidx > 2 else " "
             lines.append(
                 f"      -{nidx}: X={ep[0]:.10f} Y={ep[1]:.10f} Z={ep[2]:.10f}"
             )

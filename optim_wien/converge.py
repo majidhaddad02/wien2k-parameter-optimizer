@@ -304,6 +304,7 @@ class SCFJob:
     ecut: float = -6.0
     work_dir: str = "."
     shift: tuple = (0.5, 0.5, 0.5)
+    add_inversion: bool = True
     loose: bool = True
     parallel: bool = True
     label: str = ""
@@ -469,11 +470,12 @@ class SCFRunner:
     def _write_klist(self, job):
         n1, n2, n3 = job.kmesh
         s1, s2, s3 = job.shift
+        inv = 1 if job.add_inversion else 0
         kpath = os.path.join(job.work_dir, f"{job.basename}.klist")
         with open(kpath, "w") as f:
             f.write(f" {job.basename}\n")
             f.write(f" {n1:4d} {n2:4d} {n3:4d}    {n1*n2*n3}  number of k-points\n")
-            f.write("   -6  1     add INV\n")
+            f.write(f"   -6  {inv}     add INV\n")
             f.write(f" {s1:5.2f} {s2:5.2f} {s3:5.2f}     shift\n")
             f.write("END\n")
 
@@ -1123,6 +1125,9 @@ def run_convergence(structure, rmt_result, kmesh_result,
         kmesh_data_pts = eng.kmesh_data
         kmesh_fit_val = eng.kmesh_fit
         scf_kmesh = eng.scf_count_kmesh
+        # Propagate converged k-mesh into kmesh_result so downstream steps use it
+        kmesh_result.mesh = kmesh_found
+        kmesh_result.total_points = kmesh_found[0] * kmesh_found[1] * kmesh_found[2]
         warnings.extend(eng.warnings)
         errors.extend(eng.errors)
 

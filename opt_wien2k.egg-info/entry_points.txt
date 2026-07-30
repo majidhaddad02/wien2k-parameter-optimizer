@@ -1,0 +1,2 @@
+[console_scripts]
+opt_wien2k = optimize_wien2k:main

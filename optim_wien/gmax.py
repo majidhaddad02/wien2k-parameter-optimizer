@@ -16,8 +16,13 @@ class GMAXOptimizationResult:
     rationale: str = ""
 
 
-def optimize_gmax(atoms, rmt_values, precision=Precision.MEDIUM):
+def optimize_gmax(atoms, rmt_values, precision=Precision.MEDIUM, strict_faq=False):
     result = GMAXOptimizationResult()
+
+    if strict_faq:
+        result.gmax = 12.0
+        result.rationale = "Strict-FAQ mode: GMAX = 12.0 (WIEN2k default)."
+        return result
 
     has_h_small = any(a.element == "H" and rmt_values[i] < 0.8
                       for i, a in enumerate(atoms))

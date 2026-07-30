@@ -495,12 +495,20 @@ class InteractiveWizard:
             "precision": self.precision,
             "refinement": self.refinement,
             "system_type": self.system_type,
+            "bandgap": None,
             "vxc": self.vxc,
             "magnetic": self.magnetic,
             "auto_converge": self.auto_converge,
+            "converge": None,
+            "etol": 0.1,
+            "cluster_submit": False,
+            "converge_report": None,
             "output": self.output,
             "no_input_files": self.no_input_files,
             "quiet": self.quiet,
+            "only": None,
+            "machines": 0,
+            "submit": None,
         }
 
 

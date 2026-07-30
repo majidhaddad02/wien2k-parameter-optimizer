@@ -184,12 +184,14 @@ def _run_cmd(cmd, timeout=3600, desc="SCF"):
         )
 
 
-def _run_init(basename, rkmax, kmesh, ecut, parallel):
+def _run_init(basename, rkmax, kmesh, ecut, parallel, prec=None):
     n1, n2, n3 = kmesh
     numk = n1 * n2 * n3
     ecut_abs = int(abs(ecut))
     args = ["init_lapw", "-b", "-rkmax", str(rkmax), "-numk", str(numk),
             "-ecut", str(ecut_abs)]
+    if prec is not None:
+        args.extend(["-prec", str(prec)])
     if parallel:
         args.append("-p")
     _run_cmd(args, timeout=300, desc="init_lapw")

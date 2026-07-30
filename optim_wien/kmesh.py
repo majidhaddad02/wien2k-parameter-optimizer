@@ -77,6 +77,13 @@ def optimize_kmesh(structure, refinement="medium", system_type=None,
 
     st = system_type or _detect_system(structure)
 
+    if system_type is None:
+        result.notes.append(
+            f"System type auto-detected as '{st}'. If this material is a "
+            f"surface/slab or molecule, pass --system-type surface/molecule "
+            f"explicitly for a correct k-mesh."
+        )
+
     if bandgap is not None:
         if bandgap <= 0.0:
             st = "metal_small"

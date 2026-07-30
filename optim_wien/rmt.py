@@ -69,6 +69,11 @@ def _init_from_table(atoms, rmt, result):
     for i, a in enumerate(atoms):
         tv = INITIAL_RMT.get(a.element, 1.8)
         if rmt[i] < 1.0:
+            result.structural_notes.append(
+                f"{a.element}({i}): struct RMT={rmt[i]:.3f} < 1.0 — "
+                f"overwritten with heuristic default {tv:.3f}. "
+                f"Set RMT >= 1.0 in case.struct to keep your value."
+            )
             rmt[i] = tv
 
 
@@ -168,11 +173,13 @@ def _same_elements(rmt, atoms, result):
         groups.setdefault(a.element, []).append((i, rmt[i]))
     for el, entries in groups.items():
         if len(entries) > 1:
-            minv = min(e[1] for e in entries)
-            for idx, _ in entries:
-                rmt[idx] = minv
+            vals = [e[1] for e in entries]
+            indices = [e[0] for e in entries]
             result.same_element_notes.append(
-                f"Unified RMT for {el} sites: {minv:.4f} bohr."
+                f"Multiple {el} sites with different RMTs: "
+                f"{', '.join(f'({i})={v:.4f}' for i, v in zip(indices, vals))}. "
+                f"Manual review recommended — WIEN2k FAQ advises chemically "
+                f"equivalent sites should have the same RMT."
             )
 
 

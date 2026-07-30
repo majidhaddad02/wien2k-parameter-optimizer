@@ -5,6 +5,15 @@ References:
   - P. Blaha et al., J. Chem. Phys. 152, 074101 (2020)
   - WIEN2k User's Guide
   - WIEN2k FAQ: http://www.wien2k.at/reg_user/faq/
+
+Provenance notes:
+  - INITIAL_RMT: heuristic defaults based on common WIEN2k workshop
+    practice. These are NOT from any published table. A professional
+    user should use RMT values from their own case.struct file, which
+    takes priority over these defaults.
+  - RKMAX_TABLE: only O=7, N=6.5, C=5.5, Fe=8, Cu=8 are from Blaha
+    2020 Table I. All other elements default to 7.0 (WIEN2k default).
+    See rkmax.py for the fallback.
 """
 
 from enum import Enum
@@ -52,27 +61,11 @@ ELEMENT_TYPE = {
     "Cf": "f", "Es": "f", "Fm": "f", "Md": "f", "No": "f", "Lr": "f",
 }
 
-ELECTRONEGATIVITY = {
-    "H": 2.20, "He": 0, "Li": 0.98, "Be": 1.57, "B": 2.04, "C": 2.55,
-    "N": 3.04, "O": 3.44, "F": 3.98, "Ne": 0, "Na": 0.93, "Mg": 1.31,
-    "Al": 1.61, "Si": 1.90, "P": 2.19, "S": 2.58, "Cl": 3.16, "Ar": 0,
-    "K": 0.82, "Ca": 1.00, "Sc": 1.36, "Ti": 1.54, "V": 1.63, "Cr": 1.66,
-    "Mn": 1.55, "Fe": 1.83, "Co": 1.88, "Ni": 1.91, "Cu": 1.90, "Zn": 1.65,
-    "Ga": 1.81, "Ge": 2.01, "As": 2.18, "Se": 2.55, "Br": 2.96, "Kr": 3.00,
-    "Rb": 0.82, "Sr": 0.95, "Y": 1.22, "Zr": 1.33, "Nb": 1.60, "Mo": 2.16,
-    "Tc": 1.90, "Ru": 2.20, "Rh": 2.28, "Pd": 2.20, "Ag": 1.93, "Cd": 1.69,
-    "In": 1.78, "Sn": 1.96, "Sb": 2.05, "Te": 2.10, "I": 2.66, "Xe": 2.60,
-    "Cs": 0.79, "Ba": 0.89, "La": 1.10, "Ce": 1.12, "Pr": 1.13,
-    "Nd": 1.14, "Pm": 1.13, "Sm": 1.17, "Eu": 1.20, "Gd": 1.20,
-    "Tb": 1.10, "Dy": 1.22, "Ho": 1.23, "Er": 1.24, "Tm": 1.25,
-    "Yb": 1.10, "Lu": 1.27, "Hf": 1.30, "Ta": 1.50, "W": 2.36,
-    "Re": 1.90, "Os": 2.20, "Ir": 2.20, "Pt": 2.28, "Au": 2.54,
-    "Hg": 2.00, "Tl": 1.62, "Pb": 2.33, "Bi": 2.02, "Po": 2.00,
-    "At": 2.20, "Rn": 2.20, "Fr": 0.70, "Ra": 0.90, "Ac": 1.10,
-    "Th": 1.30, "Pa": 1.50, "U": 1.38, "Np": 1.36, "Pu": 1.28,
-}
 
 INITIAL_RMT = {
+    # Heuristic defaults — NOT from a published table.
+    # A professional user should use the RMT from their own
+    # case.struct file. These are only used when struct RMT < 1.0.
     "H": 0.80, "He": 1.00, "Li": 1.60, "Be": 1.40, "B": 1.30, "C": 1.30,
     "N": 1.30, "O": 1.40, "F": 1.30, "Ne": 1.20, "Na": 1.90, "Mg": 1.90,
     "Al": 2.00, "Si": 1.70, "P": 1.70, "S": 1.70, "Cl": 1.70, "Ar": 1.60,
@@ -95,28 +88,14 @@ INITIAL_RMT = {
 }
 
 RKMAX_TABLE = {
-    "H": 3.0, "He": 3.5, "Li": 4.5, "Be": 5.0, "B": 5.0, "Si": 5.0, "C": 5.5, "P": 5.5,
-    "N": 6.5, "S": 6.5,
-    "O": 7.0, "F": 7.0, "Cl": 7.0,
-    "Na": 6.5, "K": 6.5, "Rb": 6.5, "Cs": 6.5, "Fr": 6.5,
-    "Mg": 6.5, "Ca": 6.5, "Sr": 6.5, "Ba": 6.5, "Ra": 6.5,
-    "Al": 6.5, "Ga": 6.5, "Ge": 6.5,
-    "Ne": 5.5, "Ar": 5.5, "Kr": 6.5, "Xe": 6.5, "Rn": 7.0,
-    "Sc": 7.5, "Ti": 7.5, "V": 7.5, "Cr": 7.5, "Mn": 8.0,
-    "Fe": 8.0, "Co": 8.0, "Ni": 8.0, "Cu": 8.0, "Zn": 8.0,
-    "As": 7.5, "Se": 7.5, "Br": 7.5,
-    "Y": 7.5, "Zr": 7.5, "Nb": 7.5, "Mo": 7.5, "Tc": 8.0,
-    "Ru": 8.0, "Rh": 8.0, "Pd": 8.0, "Ag": 8.0, "Cd": 8.0,
-    "In": 8.0, "Sn": 8.0, "Sb": 8.0, "Te": 8.0, "I": 8.0,
-    "La": 8.0, "Ce": 8.0, "Hf": 8.0, "Ta": 8.0, "W": 8.0, "Re": 8.0,
-    "Os": 8.5, "Ir": 8.5, "Pt": 8.5, "Au": 8.5, "Hg": 8.5,
-    "Tl": 8.5, "Pb": 8.5, "Bi": 8.5, "Po": 8.5, "At": 8.5,
-    "Pr": 8.5, "Nd": 8.5, "Pm": 8.5, "Sm": 8.5, "Eu": 8.5,
-    "Gd": 8.5, "Tb": 8.5, "Dy": 8.5, "Ho": 8.5, "Er": 8.5,
-    "Tm": 8.5, "Yb": 8.5, "Lu": 8.5,
-    "Ac": 8.5, "Th": 8.5, "Pa": 8.5, "U": 8.5, "Np": 8.5,
-    "Pu": 8.5, "Am": 8.5, "Cm": 8.5, "Bk": 8.5, "Cf": 8.5,
-    "Es": 8.5, "Fm": 8.5, "Md": 8.5, "No": 8.5, "Lr": 8.5,
+    # Blaha 2020 Table I — only these 5 values are published.
+    # All other elements default to 7.0 (WIEN2k default) via
+    # RKMAX_TABLE.get(element, 7.0) in rkmax.py.
+    "C": 5.5,
+    "N": 6.5,
+    "O": 7.0,
+    "Fe": 8.0,
+    "Cu": 8.0,
 }
 
 RKMAX_OFFSET = {
@@ -199,6 +178,18 @@ VXCTYPE_SCAN = 28
 VXCTYPE_HSE = 40
 
 NR2V_DEFAULT = 1
+
+INIT_LAPW_PREC = {
+    Precision.SCREENING: 0,
+    Precision.COARSE: 0,
+    Precision.MEDIUM: 1,
+    Precision.HIGH: 2,
+    Precision.VERY_HIGH: 3,
+}
+
+PRECISION_TO_PREC_FLAG = {
+    "screening": 0, "coarse": 0, "medium": 1, "high": 2, "very_high": 3,
+}
 
 REFERENCES = [
     "P. Blaha et al., J. Chem. Phys. 152, 074101 (2020)",

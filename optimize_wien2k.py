@@ -124,6 +124,22 @@ Examples:
                         metavar="STEP",
                         help="Run only specified step(s): rmt rkmax gmax "
                              "lmax kmesh mixing core")
+    parser.add_argument("--strict-faq", action="store_true",
+                        help="Strict FAQ mode: use Blaha table values directly, "
+                             "no precision offsets. References: WIEN2k FAQ RMT, "
+                             "RKMAX, kgen (http://www.wien2k.at/reg_user/faq/)")
+    parser.add_argument("--prec", type=int, default=None,
+                        choices=[0, 1, 2, 3],
+                        help="init_lapw -prec flag value (0=fast, 1=standard, "
+                             "2=high, 3=very high). Overrides --precision mapping. "
+                             "Reference: WIEN2k User's Guide, Section 3.2")
+    parser.add_argument("--machines", type=int, default=0, metavar="NPROC",
+                        help="Generate case.machines file for NPROC parallel "
+                             "processes. Reference: WIEN2k User's Guide, Section 3.5")
+    parser.add_argument("--submit", default=None,
+                        choices=["slurm", "pbs"], metavar="SCHEDULER",
+                        help="Generate job submission script (SLURM or PBS) "
+                             "with optimized parameters")
     return parser.parse_args()
 
 
@@ -186,6 +202,8 @@ def _run_optimization(config, interactive=False):
     if not structure.atoms:
         error("No atoms found in struct file.")
 
+    strict_faq = getattr(args, "strict_faq", False)
+
     rmt_result = rkmax_result = gmax_result = lmax_result = None
     kmesh_result = mixing_result = core_valence_result = None
 
@@ -241,13 +259,14 @@ def _run_optimization(config, interactive=False):
     rmt_result = _step("rmt",
         lambda: optimize_rmt(structure, calc_type, precision))
     rkmax_result = _step("rkmax",
-        lambda: optimize_rkmax(structure.atoms, _get_rmt(), precision))
+        lambda: optimize_rkmax(structure.atoms, _get_rmt(), precision, strict_faq=strict_faq))
     gmax_result = _step("gmax",
-        lambda: optimize_gmax(structure.atoms, _get_rmt(), precision))
+        lambda: optimize_gmax(structure.atoms, _get_rmt(), precision, strict_faq=strict_faq))
     lmax_result = _step("lmax",
         lambda: optimize_lmax(structure.atoms, _get_rmt()))
     kmesh_result = _step("kmesh",
-        lambda: optimize_kmesh(structure, refinement=args.refinement,
+        lambda: optimize_kmesh(structure,
+                                refinement="medium" if strict_faq else args.refinement,
                                 system_type=args.system_type,
                                 bandgap=getattr(args, "bandgap", None)))
     mixing_result = _step("mixing",
@@ -290,9 +309,30 @@ def _run_optimization(config, interactive=False):
             kmesh_result, mixing_result, core_valence_result,
             calc_type=args.calc_type, vxc_type=vxc,
             magnetic=args.magnetic, spin_polarized=args.magnetic,
+            vxc_label=args.vxc,
+            nproc_machines=getattr(args, "machines", 0),
         )
         if verbose:
             tracker.done()
+
+    # ── Generate job submission scripts if requested ──
+    gen_submit = getattr(args, "submit", None)
+    if gen_submit:
+        from optim_wien.submit import generate_slurm_script, generate_pbs_script
+        n1, n2, n3 = kmesh_result.mesh
+        nproc = max(getattr(args, "machines", 0), 4)
+        kWargs = dict(
+            basename=basename, work_dir=os.path.abspath(args.output),
+            rkmax=rkmax_result.rkmax, numk=n1 * n2 * n3,
+            ecut=int(abs(core_valence_result.ecut)), parallel=True,
+            output_dir=args.output,
+        )
+        if gen_submit == "slurm":
+            spath = generate_slurm_script(nproc=nproc, **kWargs)
+            gen_files["slurm"] = spath
+        elif gen_submit == "pbs":
+            ppath = generate_pbs_script(nproc=nproc, **kWargs)
+            gen_files["pbs"] = ppath
 
     if verbose:
         tracker.finish()
@@ -503,11 +543,27 @@ def _show_results(rmt_result, rkmax_result, gmax_result, lmax_result,
     # WIEN2k command
     echo()
     section("Ready for WIEN2k")
+
+    prec_flag = getattr(args, "prec", None)
+    prec_str = f" -prec {prec_flag}" if prec_flag is not None else ""
     init_cmd = (f"init_lapw -b -rkmax {rkmax_result.rkmax} "
                 f"-numk {n1*n2*n3} "
-                f"-ecut {int(abs(core_valence_result.ecut))}")
+                f"-ecut {int(abs(core_valence_result.ecut))}{prec_str}")
     echo(style(f"    $ {init_cmd}", fg="bright_black"))
     echo(style(f"    $ run_lapw -p", fg="bright_black"))
+    echo()
+
+    if getattr(args, "machines", 0) > 0:
+        info("Machines", f"{basename}.machines ({args.machines} processes)")
+
+    if getattr(args, "submit", None) == "slurm":
+        info("SLURM", f"submit_{basename}_slurm.sh")
+    elif getattr(args, "submit", None) == "pbs":
+        info("PBS", f"submit_{basename}_pbs.pbs")
+
+    if getattr(args, "vxc", None) == "hse":
+        info("Hybrid", f"{basename}.in2c (HSE functional)")
+
     echo()
 
 

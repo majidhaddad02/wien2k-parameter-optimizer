@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opt-wien2k"
+version = "1.1.0"
+description = "WIEN2k parameter optimizer — RMT, RKMAX, GMAX, LMAX, k-mesh, mixing, core/valence"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "open2code"},
+]
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "License :: OSI Approved :: MIT License",
+]
+
+[project.scripts]
+opt_wien2k = "optimize_wien2k:main"
+
+[tool.setuptools.packages.find]
+include = ["optim_wien*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
